@@ -1,408 +1,298 @@
 /**
- * esp32_master — command console + protocol master for the ESP32 DevKit
+ * esp32_master.ino — ESP32 master v2 for Supermikrokontroler
  *
- * Accepts human commands on the USB Serial console (115200 8N1) and
- * translates them into the line-based ASCII protocol spoken over UART2
- * (GPIO16/GPIO17) to the STM32 Blue Pill slave.
+ * Features vs v1:
+ *   - CRC16 on every SEND/DONE/ERR frame (integrity checking)
+ *   - Automatic HEARTBEAT every HEARTBEAT_INTERVAL_MS
+ *   - Link state tracking (CONNECTED / DEGRADED / DISCONNECTED)
+ *   - Watchdog forwarding: master auto-sends SYS:WDOG:KICK when wdog is armed
+ *   - Full peripheral command set (GPIO, ADC, PWM, I2C, SPI, U2, EE, IRQ, SYS, CALC)
+ *   - Same state machine (IDLE/WAIT_RECV/WAIT_DONE/POLLING) with CRC verification
  *
- * *** Serial Monitor line ending MUST be set to "Newline" (not CR, not Both).
- *     The master reads lines with readStringUntil('\n') and the command is
- *     silently dropped if no '\n' is received. ***
+ * Serial Monitor settings:
+ *   Baud: 115200,  Line ending: Newline (NOT CR, NOT Both)
  *
- * UART GPIO assignment:
+ * UART2 wiring (same as v1):
  *   GPIO17 (TX2) -----> STM32 PA10 (USART1 RX)
  *   GPIO16 (RX2) <----- STM32 PA9  (USART1 TX)
- *
- * These are NOT the pins silkscreened "TX" and "RX" on most DevKit boards —
- * those are GPIO1/GPIO3 which belong to the USB console (Serial).
  *
  * Board: esp32:esp32:esp32
  */
 
 #include <Arduino.h>
+#include "protocol.h"
+#include "parser.h"
 
 // ---------------------------------------------------------------------------
-// Hardware & baud
+// Hardware
 // ---------------------------------------------------------------------------
-
-static const int  STM_RX_PIN  = 16;
-static const int  STM_TX_PIN  = 17;
-static const long BAUD        = 115200;
-
-// UART2 to the slave (8N1 for application firmware; flasher uses 8E1)
+static const int  STM_RX  = 16;
+static const int  STM_TX  = 17;
+static const long BAUD    = 115200;
 HardwareSerial STM(2);
 
 // ---------------------------------------------------------------------------
-// Protocol constants (must match stm32_slave)
+// Timing constants
 // ---------------------------------------------------------------------------
-
-static const unsigned long TIMEOUT_RECV_MS  = 300;   // wait for RECV after SEND
-static const unsigned long TIMEOUT_DONE_MS  = 2000;  // wait for DONE after RECV
-static const unsigned long TIMEOUT_POLL_MS  = 400;   // interval between POLLs
-static const int           MAX_RETRY        = 3;
-static const int           MAX_POLLS        = 15;
+static const unsigned long TIMEOUT_RECV_MS       = 300;
+static const unsigned long TIMEOUT_DONE_MS       = 2500;
+static const unsigned long TIMEOUT_POLL_MS       = 400;
+static const unsigned long HEARTBEAT_INTERVAL_MS = 5000;
+static const unsigned long HEARTBEAT_TIMEOUT_MS  = 1500;
+static const int           MAX_RETRY             = 3;
+static const int           MAX_POLLS             = 15;
 
 // ---------------------------------------------------------------------------
 // State machine
 // ---------------------------------------------------------------------------
-
-enum class State {
-    IDLE,
-    WAIT_RECV,   // sent SEND, waiting for RECV from slave
-    WAIT_DONE,   // got RECV, waiting for DONE
-    POLLING,     // timed out waiting for DONE, sending periodic POLL
-};
-
-static State         state       = State::IDLE;
-static int           currentSeq  = 1;   // 1..999, wraps to 1
-static String        pendingCmd  = "";  // protocol CMD sent to slave
-static unsigned long stateTs     = 0;   // millis() when we entered current state
-static unsigned long lastPollTs  = 0;   // millis() of last POLL send
-static int           retryCount  = 0;
-static int           pollCount   = 0;
+enum class State { IDLE, WAIT_RECV, WAIT_DONE, POLLING };
+static State state         = State::IDLE;
+static int   currentSeq    = 1;
+static String pendingData  = "";   // DATA string of in-flight SEND
+static unsigned long stateTs   = 0;
+static unsigned long lastPollTs = 0;
+static int retryCount = 0;
+static int pollCount  = 0;
 
 // ---------------------------------------------------------------------------
-// Sequence number helpers
+// Link / heartbeat state
 // ---------------------------------------------------------------------------
-
-static String seqStr(int n) {
-    // 3-digit zero-padded
-    char buf[4];
-    snprintf(buf, sizeof(buf), "%03d", n);
-    return String(buf);
-}
-
-static void advanceSeq() {
-    currentSeq++;
-    if (currentSeq > 999) currentSeq = 1;
-}
+enum class LinkState { CONNECTED, DEGRADED, DISCONNECTED };
+static LinkState linkState       = LinkState::CONNECTED;
+static unsigned long lastHbSendMs  = 0;
+static unsigned long lastHbRecvMs  = 0;
+static int           hbMissCount   = 0;
+static bool          hbWaiting     = false;
+static const int     HB_MAX_MISS   = 3;
 
 // ---------------------------------------------------------------------------
-// Line buffer for slave replies
+// Watchdog forwarding
 // ---------------------------------------------------------------------------
+static bool     wdogArmed       = false;
+static unsigned long wdogPeriodMs  = 0;
+static unsigned long lastWdogKickMs = 0;
 
+// ---------------------------------------------------------------------------
+// Buffers
+// ---------------------------------------------------------------------------
 static String stmRxBuf = "";
 
 // ---------------------------------------------------------------------------
-// Console output helpers
+// Console helpers (24-bit ANSI on ESP32 Serial)
 // ---------------------------------------------------------------------------
+static void ansi(const char* code) { Serial.print("\033["); Serial.print(code); }
+static void clr()  { Serial.print("\033[0m"); }
+static void bold() { Serial.print("\033[1m"); }
 
-static void printBanner() {
-    Serial.println();
-    Serial.println("===================================================");
-    Serial.println("  Supermikrokontroler — ESP32 master v1.0");
-    Serial.println("  Slave: STM32F103C8T6 Blue Pill on UART2");
-    Serial.println("===================================================");
-    Serial.println("Type 'help' for commands.");
-    Serial.println();
-}
+#define CLR_GREEN  "\033[38;2;80;220;100m"
+#define CLR_RED    "\033[38;2;255;80;80m"
+#define CLR_AMBER  "\033[38;2;255;200;60m"
+#define CLR_BLUE   "\033[38;2;130;200;255m"
+#define CLR_DIM    "\033[38;2;120;120;120m"
+#define CLR_RESET  "\033[0m"
 
-static void printHelp() {
-    Serial.println("Commands (case-insensitive):");
-    Serial.println("  ping              -- test link to slave");
-    Serial.println("  led on            -- turn slave LED on");
-    Serial.println("  led off           -- turn slave LED off");
-    Serial.println("  led status        -- read slave LED state");
-    Serial.println("  blink <ms>        -- blink LED at <ms> period (0 = stop)");
-    Serial.println("  adc <ch>          -- read ADC channel (0=PA0, 1=PA1, or pin token)");
-    Serial.println("  pwm <pin> <v>     -- analogWrite pin 0..255 (e.g. pwm A8 128)");
-    Serial.println("  gpio set <P> <v>  -- digitalWrite pin P to 0 or 1");
-    Serial.println("  gpio get <P>      -- digitalRead pin P");
-    Serial.println("  status            -- slave firmware info");
-    Serial.println("  reset             -- resynchronize protocol");
-    Serial.println("  help              -- this message");
-    Serial.println();
-    Serial.println("Pin tokens: A0..A15, B0..B15, C13..C15");
-    Serial.println("NOTE: Serial Monitor line ending must be 'Newline'.");
-    Serial.println();
-}
-
-static void logTx(const String& frame) {
-    Serial.print("--> ");
-    Serial.println(frame);
-}
-
-static void logRx(const String& frame) {
-    Serial.print("<-- ");
-    Serial.println(frame);
-}
-
-static void logOk(const String& msg) {
-    Serial.print("[OK] ");
-    Serial.println(msg);
-}
-
-static void logErr(const String& msg) {
-    Serial.print("[ERR] ");
-    Serial.println(msg);
-}
+void logOk  (const String& m) { Serial.print(CLR_GREEN "[OK]"  CLR_RESET "  "); Serial.println(m); }
+void logErr (const String& m) { Serial.print(CLR_RED   "[ERR]" CLR_RESET " "); Serial.println(m); }
+void logWarn(const String& m) { Serial.print(CLR_AMBER "[!!]"  CLR_RESET "  "); Serial.println(m); }
+void logTx  (const String& m) { Serial.print(CLR_DIM   "-->"   CLR_RESET "   "); Serial.println(m); }
+void logRx  (const String& m) { Serial.print(CLR_DIM   "<--"   CLR_RESET "   "); Serial.println(m); }
+void logInfo(const String& m) { Serial.print(CLR_BLUE  "   "   CLR_RESET " "); Serial.println(m); }
 
 // ---------------------------------------------------------------------------
-// Send a frame to the slave
+// Send to slave
 // ---------------------------------------------------------------------------
-
-static void sendFrame(const String& frame) {
+static void stmSend(const String& frame) {
     logTx(frame);
     STM.println(frame);
 }
 
-// ---------------------------------------------------------------------------
-// Human command -> protocol CMD translation
-// ---------------------------------------------------------------------------
-
-// Returns the protocol CMD string (e.g. "LED:ON") or "" for local-only commands.
-// Prints an error and returns "" on bad syntax.
-static String parseHumanCommand(const String& raw) {
-    String input = raw;
-    input.trim();
-    input.toLowerCase();
-
-    if (input.length() == 0) return "";
-
-    // Split on whitespace into tokens
-    String tokens[6];
-    int    ntok = 0;
-    int    i = 0;
-    while (i < (int)input.length() && ntok < 6) {
-        while (i < (int)input.length() && input.charAt(i) == ' ') i++;
-        if (i >= (int)input.length()) break;
-        int start = i;
-        while (i < (int)input.length() && input.charAt(i) != ' ') i++;
-        tokens[ntok++] = input.substring(start, i);
-    }
-    if (ntok == 0) return "";
-
-    // Local-only commands
-    if (tokens[0] == "help") {
-        printHelp();
-        return "";
-    }
-
-    // ping → bare PING (no SEQ per spec)
-    if (tokens[0] == "ping") {
-        return "__PING__";  // special sentinel handled in startCommand()
-    }
-
-    if (tokens[0] == "led") {
-        if (ntok < 2) { logErr("Usage: led on|off|status"); return ""; }
-        String sub = tokens[1];
-        if      (sub == "on")     return "LED:ON";
-        else if (sub == "off")    return "LED:OFF";
-        else if (sub == "status") return "LED:STATUS";
-        else { logErr("Unknown led sub-command: " + sub); return ""; }
-    }
-
-    if (tokens[0] == "blink") {
-        if (ntok < 2) { logErr("Usage: blink <ms>"); return ""; }
-        return "BLINK:" + tokens[1];
-    }
-
-    if (tokens[0] == "adc") {
-        if (ntok < 2) { logErr("Usage: adc <channel>"); return ""; }
-        // Uppercase pin token if it looks like a letter+digits (e.g. a0 -> A0)
-        String ch = tokens[1];
-        ch.toUpperCase();
-        return "ADC:" + ch;
-    }
-
-    if (tokens[0] == "pwm") {
-        if (ntok < 3) { logErr("Usage: pwm <pin> <value 0-255>"); return ""; }
-        String pin = tokens[1]; pin.toUpperCase();
-        return "PWM:" + pin + ":" + tokens[2];
-    }
-
-    if (tokens[0] == "gpio") {
-        if (ntok < 2) { logErr("Usage: gpio set <pin> <0|1>  OR  gpio get <pin>"); return ""; }
-        if (tokens[1] == "set") {
-            if (ntok < 4) { logErr("Usage: gpio set <pin> <0|1>"); return ""; }
-            String pin = tokens[2]; pin.toUpperCase();
-            return "GPIO:SET:" + pin + ":" + tokens[3];
-        } else if (tokens[1] == "get") {
-            if (ntok < 3) { logErr("Usage: gpio get <pin>"); return ""; }
-            String pin = tokens[2]; pin.toUpperCase();
-            return "GPIO:GET:" + pin;
-        } else {
-            logErr("Usage: gpio set|get ...");
-            return "";
-        }
-    }
-
-    if (tokens[0] == "status") {
-        return "STATUS";
-    }
-
-    if (tokens[0] == "reset") {
-        return "__RESET__";  // special sentinel
-    }
-
-    logErr("Unknown command '" + tokens[0] + "'. Type 'help'.");
-    return "";
+// Build a SEND frame with CRC over DATA
+static void sendCommand(const String& data) {
+    String crc   = proto_crc_str(data);
+    String frame = "SEND:" + seqStr(currentSeq) + ":" + crc + ":" + data;
+    stmSend(frame);
 }
 
 // ---------------------------------------------------------------------------
-// Start a new protocol transaction
+// Start a new command transaction
 // ---------------------------------------------------------------------------
-
 static void startCommand(const String& cmd) {
     if (state != State::IDLE) {
-        logErr("Still waiting for previous command. Try 'reset'.");
+        logErr("Still busy with previous command. Type 'reset' first.");
         return;
     }
 
-    // --- PING: bare frame, no SEQ ---
     if (cmd == "__PING__") {
-        sendFrame("PING");
-        // PING is answered directly with PONG; use WAIT_RECV with a tight timeout.
-        // We reuse the RECV wait since PONG ≈ RECV semantically (quick reply).
-        pendingCmd  = "__PING__";
-        stateTs     = millis();
-        retryCount  = 0;
-        state       = State::WAIT_RECV;
-        return;
-    }
-
-    // --- RESET: bare frame ---
-    if (cmd == "__RESET__") {
-        sendFrame("RESET");
-        state      = State::IDLE;
+        stmSend("PING");
+        pendingData = "__PING__";
+        state   = State::WAIT_RECV;
+        stateTs = millis();
         retryCount = 0;
-        pollCount  = 0;
-        logOk("Protocol reset sent.");
+        return;
+    }
+    if (cmd == "__RESET__") {
+        stmSend("RESET");
+        state = State::IDLE;
+        logOk("Reset sent.");
+        return;
+    }
+    if (cmd == "__HB__") {
+        stmSend("HEARTBEAT");
+        hbWaiting   = true;
+        lastHbSendMs = millis();
         return;
     }
 
-    // --- Normal SEND:NNN:CMD ---
-    pendingCmd = cmd;
-    retryCount = 0;
-    String frame = "SEND:" + seqStr(currentSeq) + ":" + cmd;
-    sendFrame(frame);
+    pendingData = cmd;
+    retryCount  = 0;
+    sendCommand(cmd);
     state   = State::WAIT_RECV;
     stateTs = millis();
 }
 
 // ---------------------------------------------------------------------------
-// Process a line received from the slave
+// CRC verification for incoming DONE/ERR frames
 // ---------------------------------------------------------------------------
+static bool verifyCrc(const String& crcField, const String& data) {
+    if (crcField.length() != 4) return true; // skip check if missing
+    uint16_t expected = (uint16_t)strtoul(crcField.c_str(), nullptr, 16);
+    return expected == proto_crc16(data);
+}
 
+// ---------------------------------------------------------------------------
+// Handle one line received from slave
+// ---------------------------------------------------------------------------
 static void handleSlaveReply(const String& raw) {
-    String line = raw;
-    line.trim();
-    if (line.length() == 0) return;
-
+    String line = raw; line.trim();
+    if (!line.length()) return;
     logRx(line);
 
-    // Parse TYPE:SEQ:DATA (SEQ and DATA optional for bare frames)
-    String type = line;
-    String seq  = "";
-    String data = "";
-    int c1 = line.indexOf(':');
-    if (c1 >= 0) {
-        type = line.substring(0, c1);
-        String rest = line.substring(c1 + 1);
-        int c2 = rest.indexOf(':');
-        if (c2 >= 0) {
-            seq  = rest.substring(0, c2);
-            data = rest.substring(c2 + 1);
-        } else {
-            seq = rest;
-        }
-    }
+    // Parse: TYPE[:SEQ[:CRC[:DATA]]]
+    String parts[4];
+    int np = splitTokens(line, ':', parts, 4);
+    if (np < 1) return;
 
-    // PONG — reply to PING
+    String type    = parts[0];
+    String seq     = (np >= 2) ? parts[1] : "";
+    String crcF    = (np >= 3) ? parts[2] : "";
+    String payload = (np >= 4) ? parts[3] : "";
+
+    // ---- PONG ----
     if (type == "PONG") {
-        if (state == State::WAIT_RECV && pendingCmd == "__PING__") {
-            logOk("PONG received — link is alive.");
+        if (state == State::WAIT_RECV && pendingData == "__PING__") {
+            logOk("PONG — link alive.");
             state = State::IDLE;
+            // Update link health
+            hbMissCount = 0;
+            linkState   = LinkState::CONNECTED;
         }
         return;
     }
 
-    // RECV — slave acknowledged our SEND
-    if (type == "RECV") {
-        if (state == State::WAIT_RECV && seq == seqStr(currentSeq)) {
+    // ---- HEARTBEAT:ACK ----
+    if (type == "HEARTBEAT" && seq == "ACK") {
+        hbWaiting    = false;
+        hbMissCount  = 0;
+        lastHbRecvMs = millis();
+        linkState    = LinkState::CONNECTED;
+        return;
+    }
+    // Also handle "HEARTBEAT:ACK" parsed as single token with no colon split
+    if (line == "HEARTBEAT:ACK") {
+        hbWaiting    = false;
+        hbMissCount  = 0;
+        lastHbRecvMs = millis();
+        linkState    = LinkState::CONNECTED;
+        return;
+    }
+
+    // ---- RESET:ACK ----
+    if (line == "RESET:ACK") {
+        logOk("Slave reset acknowledged.");
+        state = State::IDLE;
+        return;
+    }
+
+    // ---- RECV ----
+    if (type == "RECV" && seq == seqStr(currentSeq)) {
+        if (state == State::WAIT_RECV) {
             state   = State::WAIT_DONE;
             stateTs = millis();
         }
         return;
     }
 
-    // DONE — command completed
-    if (type == "DONE") {
-        if ((state == State::WAIT_DONE || state == State::POLLING)
-            && seq == seqStr(currentSeq))
-        {
-            String freeFrame = "FREE:" + seq;
-            sendFrame(freeFrame);
-            logOk(data.length() > 0 ? data : "(empty result)");
-            advanceSeq();
+    // ---- DONE ----
+    if (type == "DONE" && seq == seqStr(currentSeq)) {
+        if (state == State::WAIT_DONE || state == State::POLLING) {
+            if (!verifyCrc(crcF, payload)) {
+                logErr("CRC mismatch on DONE! Payload may be corrupted.");
+                // Still accept it but warn
+            }
+            // Send FREE to release the slot on the slave
+            stmSend("FREE:" + seq);
+            logOk(payload.length() ? payload : "(empty)");
+            currentSeq = seqNext(currentSeq);
             state = State::IDLE;
+
+            // Update link health
+            hbMissCount = 0;
+            linkState   = LinkState::CONNECTED;
         }
         return;
     }
 
-    // BUSY — slave still working (reply to our POLL)
-    if (type == "BUSY") {
-        // Nothing to do; next POLL will be sent by the timeout tick
+    // ---- BUSY ----
+    if (type == "BUSY") return;  // handled by polling tick
+
+    // ---- ERR ----
+    if (type == "ERR" && seq == seqStr(currentSeq)) {
+        if (!verifyCrc(crcF, payload)) logWarn("CRC mismatch on ERR frame.");
+        logErr("Slave: " + payload);
+        stmSend("FREE:" + seq);
+        currentSeq = seqNext(currentSeq);
+        state = State::IDLE;
         return;
     }
 
-    // ERR — slave reported an error
-    if (type == "ERR") {
-        logErr("Slave error: " + data);
-        // Still need to free the slot if SEQ matches
-        if (seq == seqStr(currentSeq)) {
-            String freeFrame = "FREE:" + seq;
-            sendFrame(freeFrame);
-            advanceSeq();
-            state = State::IDLE;
-        }
-        return;
-    }
-
-    // Unexpected frame — log it but don't crash
-    Serial.print("[??] Unexpected: ");
+    // Unexpected — log it
+    Serial.print(CLR_DIM "[??] " CLR_RESET);
     Serial.println(line);
 }
 
 // ---------------------------------------------------------------------------
-// Timeout and retry tick — called every loop iteration
+// State machine timeout / retry tick
 // ---------------------------------------------------------------------------
-
 static void stateTick() {
     unsigned long now = millis();
 
     if (state == State::WAIT_RECV) {
-        if (now - stateTs >= TIMEOUT_RECV_MS) {
-            if (pendingCmd == "__PING__") {
-                // PING not answered
-                logErr("PING timed out — no PONG.");
-                state = State::IDLE;
-                return;
-            }
-            // SEND not acknowledged — retry
-            retryCount++;
-            if (retryCount > MAX_RETRY) {
-                logErr("RECV timeout after " + String(MAX_RETRY) + " retries. Use 'reset'.");
-                state = State::IDLE;
-                return;
-            }
-            // Retransmit with the same SEQ
-            String frame = "SEND:" + seqStr(currentSeq) + ":" + pendingCmd;
-            Serial.print("[RETRY ");
-            Serial.print(retryCount);
-            Serial.print("] ");
-            sendFrame(frame);
-            stateTs = now;
+        if (now - stateTs < TIMEOUT_RECV_MS) return;
+
+        if (pendingData == "__PING__") {
+            logErr("PING timeout."); state = State::IDLE; return;
         }
+        retryCount++;
+        if (retryCount > MAX_RETRY) {
+            logErr("RECV timeout after " + String(MAX_RETRY) + " retries. Type 'reset'.");
+            state = State::IDLE;
+            return;
+        }
+        Serial.print(CLR_AMBER "[RETRY " CLR_RESET);
+        Serial.print(retryCount);
+        Serial.print(CLR_AMBER "/" CLR_RESET);
+        Serial.print(MAX_RETRY);
+        Serial.println("]");
+        sendCommand(pendingData);
+        stateTs = now;
         return;
     }
 
     if (state == State::WAIT_DONE) {
         if (now - stateTs >= TIMEOUT_DONE_MS) {
-            // Switch to polling mode
             state       = State::POLLING;
             pollCount   = 0;
-            lastPollTs  = now - TIMEOUT_POLL_MS;  // trigger first POLL immediately
+            lastPollTs  = now - TIMEOUT_POLL_MS;  // trigger immediately
         }
         return;
     }
@@ -411,12 +301,11 @@ static void stateTick() {
         if (now - lastPollTs >= TIMEOUT_POLL_MS) {
             pollCount++;
             if (pollCount > MAX_POLLS) {
-                logErr("Slave did not complete after " + String(MAX_POLLS) + " polls. Use 'reset'.");
+                logErr("Slave unresponsive after " + String(MAX_POLLS) + " polls. Type 'reset'.");
                 state = State::IDLE;
                 return;
             }
-            String frame = "POLL:" + seqStr(currentSeq);
-            sendFrame(frame);
+            stmSend("POLL:" + seqStr(currentSeq));
             lastPollTs = now;
         }
         return;
@@ -424,49 +313,218 @@ static void stateTick() {
 }
 
 // ---------------------------------------------------------------------------
-// Arduino entry points
+// Heartbeat tick (runs in IDLE too — independent of command traffic)
+// ---------------------------------------------------------------------------
+static void heartbeatTick() {
+    unsigned long now = millis();
+
+    // Send heartbeat periodically if idle (don't interrupt commands)
+    if (!hbWaiting && state == State::IDLE &&
+        (now - lastHbSendMs >= HEARTBEAT_INTERVAL_MS)) {
+        stmSend("HEARTBEAT");
+        hbWaiting    = true;
+        lastHbSendMs = now;
+    }
+
+    // Heartbeat timeout
+    if (hbWaiting && (now - lastHbSendMs >= HEARTBEAT_TIMEOUT_MS)) {
+        hbWaiting = false;
+        hbMissCount++;
+        if (hbMissCount >= HB_MAX_MISS) {
+            linkState = LinkState::DISCONNECTED;
+            logErr("Link DEAD — slave not responding to heartbeats.");
+        } else {
+            linkState = LinkState::DEGRADED;
+            logWarn("Heartbeat miss #" + String(hbMissCount) + "/" + String(HB_MAX_MISS));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Watchdog forwarding tick
+// ---------------------------------------------------------------------------
+static void wdogForwardTick() {
+    if (!wdogArmed || wdogPeriodMs == 0) return;
+    unsigned long now = millis();
+    // Kick at half the watchdog period (safety margin)
+    if (now - lastWdogKickMs >= wdogPeriodMs / 2) {
+        if (state == State::IDLE) {
+            startCommand("SYS:WDOG:KICK");
+            lastWdogKickMs = now;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// printHelp (referenced by parser.h)
+// ---------------------------------------------------------------------------
+void printHelp() {
+    Serial.println();
+    Serial.println(CLR_BLUE "=== Supermikrokontroler v2 — Command Reference ===" CLR_RESET);
+    Serial.println();
+    Serial.println(CLR_AMBER "[ Link ]" CLR_RESET);
+    Serial.println("  ping                          test link (PING/PONG)");
+    Serial.println("  reset                         resync protocol");
+    Serial.println("  hb                            manual heartbeat test");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ GPIO ]" CLR_RESET);
+    Serial.println("  gpio mode  <pin> in|out|pu|pd|an|od");
+    Serial.println("  gpio write <pin> 0|1");
+    Serial.println("  gpio read  <pin>");
+    Serial.println("  gpio toggle <pin>");
+    Serial.println("  gpio port  A|B|C              read lower 8 pins of port");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ ADC ]" CLR_RESET);
+    Serial.println("  adc read  <pin>               12-bit raw (0-4095)");
+    Serial.println("  adc avg   <pin> <n>           average of n samples");
+    Serial.println("  adc mv    <pin>               read in millivolts");
+    Serial.println("  adc multi A0,A1,B0            read multiple pins at once");
+    Serial.println("  adc temp                      internal temperature (tenths °C)");
+    Serial.println("  adc vref                      estimated VDDA in mV");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ PWM ]" CLR_RESET);
+    Serial.println("  pwm set  <pin> <duty 0-1000>  duty in per-mille");
+    Serial.println("  pwm freq <pin> <hz> <duty>    custom frequency");
+    Serial.println("  pwm stop <pin>");
+    Serial.println("  pwm read <pin>                last set duty");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ I2C ]  default: PB6=SCL, PB7=SDA" CLR_RESET);
+    Serial.println("  i2c scan");
+    Serial.println("  i2c ping  <addr>");
+    Serial.println("  i2c write <addr> <hexbytes>");
+    Serial.println("  i2c read  <addr> <n_bytes>");
+    Serial.println("  i2c wreg  <addr> <reg> <hexbytes>");
+    Serial.println("  i2c rreg  <addr> <reg> <n_bytes>");
+    Serial.println("  (addr/reg: decimal or 0x-hex, e.g. 104 or 0x68)");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ SPI ]  default: PA5=SCK, PA6=MISO, PA7=MOSI" CLR_RESET);
+    Serial.println("  spi begin <cs_pin> <mode 0-3> <freq_khz>");
+    Serial.println("  spi xfer  <cs_pin> <hexbytes>   full-duplex → rx hex");
+    Serial.println("  spi write <cs_pin> <hexbytes>   TX only");
+    Serial.println("  spi read  <cs_pin> <n_bytes>    RX only (sends 0xFF)");
+    Serial.println("  spi end");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ USART2 ]  PA2=TX2, PA3=RX2" CLR_RESET);
+    Serial.println("  u2 cfg <baud> [bits parity stop]");
+    Serial.println("  u2 tx <hexbytes>");
+    Serial.println("  u2 rx <n_bytes> [timeout_ms]");
+    Serial.println("  u2 flush | u2 status | u2 close");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ EEPROM  flash emulation, 512 bytes ]" CLR_RESET);
+    Serial.println("  ee write  <addr> <byte 0-255>");
+    Serial.println("  ee read   <addr>");
+    Serial.println("  ee wrword <addr> <uint32>        little-endian 32-bit");
+    Serial.println("  ee rdword <addr>");
+    Serial.println("  ee wrhex  <addr> <hexbytes>");
+    Serial.println("  ee rdhex  <addr> <n_bytes>");
+    Serial.println("  ee fill   <byte>                 fill all 512 bytes");
+    Serial.println("  ee size");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ IRQ  up to 8 pins ]" CLR_RESET);
+    Serial.println("  irq attach <pin> rise|fall|change");
+    Serial.println("  irq detach <pin>|all");
+    Serial.println("  irq poll                         get and clear event counts");
+    Serial.println("  irq list");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ System ]" CLR_RESET);
+    Serial.println("  sys status | sys uptime | sys chipid | sys cpufreq");
+    Serial.println("  sys fwver  | sys freeram | sys reset");
+    Serial.println("  sys echo <text>                  round-trip latency test");
+    Serial.println("  sys wdog en <ms>                 arm slave IWDG watchdog");
+    Serial.println("  sys wdog kick                    manually kick watchdog");
+    Serial.println("  sys wdog dis");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ Compute offload ]" CLR_RESET);
+    Serial.println("  calc map <v> <in_min> <in_max> <out_min> <out_max>");
+    Serial.println("  calc crc16 <hexbytes>");
+    Serial.println("  calc sqrt <n> | calc constrain <v> <lo> <hi> | calc abs <v>");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ Legacy ]" CLR_RESET);
+    Serial.println("  led on|off|status  |  blink <ms>  |  status");
+    Serial.println();
+    Serial.println(CLR_DIM "Pin tokens: A0..A15, B0..B15, C13..C15" CLR_RESET);
+    Serial.println(CLR_DIM "NOTE: Serial Monitor line ending MUST be 'Newline'." CLR_RESET);
+    Serial.println();
+}
+
+// ---------------------------------------------------------------------------
+// Banner
+// ---------------------------------------------------------------------------
+static void printBanner() {
+    Serial.println();
+    Serial.println(CLR_BLUE "======================================================" CLR_RESET);
+    Serial.println(CLR_BLUE "  Supermikrokontroler v2 — ESP32 master" CLR_RESET);
+    Serial.println(CLR_BLUE "  Slave: STM32F103C8T6 Blue Pill on UART2" CLR_RESET);
+    Serial.println(CLR_BLUE "======================================================" CLR_RESET);
+    Serial.println(CLR_DIM "  Protocol: framed ASCII + CRC16, heartbeat, retry" CLR_RESET);
+    Serial.println(CLR_DIM "  Type 'help' for command reference." CLR_RESET);
+    Serial.println();
+}
+
+// ---------------------------------------------------------------------------
+// Setup & loop
 // ---------------------------------------------------------------------------
 
 void setup() {
     Serial.begin(BAUD);
-    // Wait for USB serial to come up (important on ESP32 with USB CDC)
     while (!Serial && millis() < 3000) {}
 
-    // UART2 to slave — 8N1 for application firmware
-    // See esp32_flasher.ino for 8E1 used during ROM bootloader flashing
-    STM.begin(BAUD, SERIAL_8N1, STM_RX_PIN, STM_TX_PIN);
+    STM.begin(BAUD, SERIAL_8N1, STM_RX, STM_TX);
+
+    lastHbSendMs  = millis();
+    lastHbRecvMs  = millis();
+    lastWdogKickMs = millis();
 
     printBanner();
 }
 
 void loop() {
-    // --- Read lines from slave ---
+    // --- Receive from slave ---
     while (STM.available()) {
         char c = (char)STM.read();
         if (c == '\n') {
             handleSlaveReply(stmRxBuf);
             stmRxBuf = "";
         } else if (c != '\r') {
-            if (stmRxBuf.length() < 128) stmRxBuf += c;
+            if ((int)stmRxBuf.length() < 256) stmRxBuf += c;
         }
     }
 
     // --- Read command from USB console ---
-    // readStringUntil blocks only until the '\n' arrives or times out (0 = no
-    // wait). We check Serial.available() first to avoid blocking at all.
     if (Serial.available()) {
         String input = Serial.readStringUntil('\n');
         input.trim();
-        if (input.length() > 0) {
-            Serial.print("> ");
+        if (input.length()) {
+            Serial.print(CLR_DIM "> " CLR_RESET);
             Serial.println(input);
-            String cmd = parseHumanCommand(input);
-            if (cmd.length() > 0) {
-                startCommand(cmd);
+
+            // Intercept watchdog arming to also set forwarding period
+            // "sys wdog en <ms>" → arm forwarding on master side too
+            {
+                String low = input; low.toLowerCase();
+                if (low.startsWith("sys wdog en ")) {
+                    String msStr = input.substring(12);
+                    msStr.trim();
+                    unsigned long ms = (unsigned long)msStr.toInt();
+                    if (ms > 0) {
+                        wdogPeriodMs   = ms;
+                        wdogArmed      = true;
+                        lastWdogKickMs = millis();
+                        logInfo("Watchdog forwarding armed at " + String(ms) + " ms period.");
+                    }
+                }
+                if (low == "sys wdog dis" || low == "sys wdog kick") {
+                    if (low == "sys wdog dis") wdogArmed = false;
+                }
             }
+
+            String cmd = parseHumanCmd(input);
+            if (cmd.length()) startCommand(cmd);
         }
     }
 
-    // --- State machine timeout / retry tick ---
+    // --- Ticks ---
     stateTick();
+    heartbeatTick();
+    wdogForwardTick();
 }

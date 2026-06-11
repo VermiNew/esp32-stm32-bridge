@@ -1,469 +1,225 @@
 /**
- * stm32_slave — universal agent firmware for STM32F103C8T6 "Blue Pill"
+ * stm32_slave.ino — STM32F103C8T6 "Blue Pill" universal hardware agent v2
  *
- * Listens on USART1 (PA9/PA10) at 115200 8N1 for a line-based ASCII protocol
- * from the ESP32 master and executes commands on the Blue Pill hardware.
- *
- * Protocol frame format:  TYPE:SEQ:DATA\n
- *   SEQ  = 3-digit zero-padded sequence number (001..999, wraps to 001)
- *   DATA = command-specific payload (may be empty)
+ * Listens on USART1 (PA9/PA10) at 115200 8N1 for a framed ASCII protocol
+ * from the ESP32 master and exposes all on-chip peripherals as commands.
  *
  * Board: STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8
  *
- * Wiring:
- *   STM32 PA10 (USART1 RX) <---- ESP32 GPIO17 (TX2)
- *   STM32 PA9  (USART1 TX) ----> ESP32 GPIO16 (RX2)
- *   STM32 3.3V               --- ESP32 3.3V   (NEVER 5V!)
- *   STM32 GND                --- ESP32 GND
+ * Wiring (application mode — USART1 used for comms, 8N1):
+ *   PA9  (USART1 TX) ----> ESP32 GPIO16 (RX2)
+ *   PA10 (USART1 RX) <---- ESP32 GPIO17 (TX2)
+ *   3.3V <---------------- ESP32 3.3V   (NEVER 5V!)
+ *   GND  <---------------- ESP32 GND
  *
- * PC13 is the onboard LED and is ACTIVE-LOW: LOW = on, HIGH = off.
+ * Available peripheral buses (exposed via protocol):
+ *   GPIO  -- all PA0..PA15, PB0..PB15, PC13..PC15
+ *   ADC   -- PA0..PA7, PB0..PB1 (12-bit), internal temp, internal Vref
+ *   PWM   -- TIM1/2/3/4 capable pins
+ *   I2C1  -- PB6(SCL) / PB7(SDA)
+ *   SPI1  -- PA5(SCK) / PA6(MISO) / PA7(MOSI), SW-CS on any GPIO
+ *   USART2 -- PA2(TX) / PA3(RX)   [USART1 reserved for master]
+ *   EEPROM -- 512 bytes flash-emulated
+ *   IRQ   -- up to 8 GPIO external interrupts
+ *   SYS   -- uptime, chip ID, CPU freq, IWDG watchdog, soft reset
+ *   CALC  -- compute offload (map, crc16, sqrt, constrain, abs)
+ *
+ * Frame format (v2):
+ *   SEND:NNN:CCCC:CMD[:ARG1[:ARG2...]]
+ *   RECV:NNN
+ *   DONE:NNN:CCCC:RESULT
+ *   ERR:NNN:CCCC:REASON
+ *   BUSY:NNN  |  POLL:NNN  |  FREE:NNN
+ *   PING / PONG / HEARTBEAT / HEARTBEAT:ACK / RESET / RESET:ACK
  */
 
 #include <Arduino.h>
+#include <IWatchdog.h>
+
+#include "protocol.h"
+#include "cmd_gpio.h"
+#include "cmd_adc.h"
+#include "cmd_pwm.h"
+#include "cmd_i2c.h"
+#include "cmd_spi.h"
+#include "cmd_u2.h"
+#include "cmd_ee.h"
+#include "cmd_irq.h"
+#include "cmd_sys.h"
+#include "cmd_misc.h"
 
 // ---------------------------------------------------------------------------
-// Hardware constants
+// Constants
 // ---------------------------------------------------------------------------
-
-// PC13 is active-low on every Blue Pill clone.
-static const int LED_PIN = PC13;
-static const long UART_BAUD = 115200;
-
-// Firmware version reported by STATUS
-static const char FW_VERSION[] = "1.0";
+static const long     UART_BAUD  = 115200;
+static const int      LED        = PC13;
+static const int      RX_BUF_MAX = 192;
 
 // ---------------------------------------------------------------------------
-// Pin helper — parse "A0".."A15", "B0".."B15", "C13".."C15" -> pin number
-// Returns -1 on parse failure.
-// STM32duino pin numbering for GenF1: PA0=0..PA15=15, PB0=16..PB15=31,
-// PC0=32..PC15=47.
+// Protocol slot (stores last DONE for POLL replay)
 // ---------------------------------------------------------------------------
-
-static int parsePin(const String& token) {
-    if (token.length() < 2) return -1;
-
-    char port = (char)toupper((unsigned char)token.charAt(0));
-    if (port < 'A' || port > 'C') return -1;
-
-    // Pin number is everything after the first character
-    String numStr = token.substring(1);
-    for (int i = 0; i < (int)numStr.length(); i++) {
-        if (!isDigit((unsigned char)numStr.charAt(i))) return -1;
-    }
-
-    int num = numStr.toInt();
-    if (num < 0 || num > 15) return -1;
-
-    // Compute flat pin index: A->0, B->1, C->2
-    return (port - 'A') * 16 + num;
-}
+static String lastDoneSeq    = "";
+static String lastDoneResult = "";
 
 // ---------------------------------------------------------------------------
-// Non-blocking blink engine
+// Frame senders
 // ---------------------------------------------------------------------------
 
-static unsigned long blinkPeriodMs = 0;  // 0 = blink off
-static unsigned long lastBlinkMs   = 0;
-static bool          blinkState    = false;
-
-static void blinkTick() {
-    if (blinkPeriodMs == 0) return;
-    unsigned long now = millis();
-    if (now - lastBlinkMs >= blinkPeriodMs / 2) {
-        lastBlinkMs = now;
-        blinkState  = !blinkState;
-        // LED is active-low
-        digitalWrite(LED_PIN, blinkState ? LOW : HIGH);
-    }
-}
-
-static void blinkStop() {
-    blinkPeriodMs = 0;
-    // Leave LED in whatever state it is; caller may set it explicitly
-}
-
-// ---------------------------------------------------------------------------
-// Protocol state — last completed command (for POLL replay)
-// ---------------------------------------------------------------------------
-
-static String lastCompletedSeq    = "";
-static String lastCompletedResult = "";
-
-// ---------------------------------------------------------------------------
-// Line buffer (transport layer)
-// ---------------------------------------------------------------------------
-
-static String rxBuf = "";
-
-// ---------------------------------------------------------------------------
-// Frame sender helpers
-// ---------------------------------------------------------------------------
-
-static void sendLine(const String& line) {
-    // Serial1 is USART1 (PA9/PA10) in STM32duino GenF1
+void sendRaw(const String& line) {
     Serial1.println(line);
 }
 
-static void sendRecv(const String& seq) {
-    sendLine("RECV:" + seq);
+void sendRecv(const String& seq) {
+    sendRaw("RECV:" + seq);
 }
 
-static void sendDone(const String& seq, const String& result) {
-    lastCompletedSeq    = seq;
-    lastCompletedResult = result;
-    sendLine("DONE:" + seq + ":" + result);
+void sendDone(const String& seq, const String& result) {
+    lastDoneSeq    = seq;
+    lastDoneResult = result;
+    sendRaw("DONE:" + seq + ":" + proto_crc_str(result) + ":" + result);
 }
 
-static void sendErr(const String& seq, const String& reason) {
-    sendLine("ERR:" + seq + ":" + reason);
+void sendErr(const String& seq, const String& reason) {
+    sendRaw("ERR:" + seq + ":" + proto_crc_str(reason) + ":" + reason);
 }
 
 // ---------------------------------------------------------------------------
-// Command handlers — all must return quickly (never block loop)
+// Main dispatcher
 // ---------------------------------------------------------------------------
 
-static void handleLed(const String& seq, const String& arg) {
-    if (arg == "ON") {
-        blinkStop();
-        digitalWrite(LED_PIN, LOW);   // active-low: LOW = on
-        sendDone(seq, "ON");
-    } else if (arg == "OFF") {
-        blinkStop();
-        digitalWrite(LED_PIN, HIGH);  // active-low: HIGH = off
-        sendDone(seq, "OFF");
-    } else if (arg == "STATUS") {
-        // Read current LED state from the pin
-        bool isOn = (digitalRead(LED_PIN) == LOW);
-        sendDone(seq, isOn ? "ON" : "OFF");
-    } else {
-        sendErr(seq, "BAD_ARG");
-    }
-}
+static void dispatch(const String& type, const String& seq,
+                     const String& crcField, const String& data) {
 
-static void handleBlink(const String& seq, const String& arg) {
-    // arg = milliseconds for full period; "0" = stop
-    unsigned long ms = (unsigned long)arg.toInt();
-    if (ms == 0) {
-        blinkStop();
-        sendDone(seq, "BLINK_OFF");
-    } else if (ms < 20) {
-        // Reject unreasonably fast blink that would thrash the pin
-        sendErr(seq, "BAD_VALUE");
-    } else {
-        blinkPeriodMs = ms;
-        lastBlinkMs   = millis();
-        blinkState    = false;
-        // LED starts off at the beginning of the blink cycle
-        digitalWrite(LED_PIN, HIGH);
-        sendDone(seq, "BLINK_ON:" + String(ms) + "ms");
-    }
-}
-
-static void handleAdc(const String& seq, const String& arg) {
-    // Accept a numeric channel (0=PA0, 1=PA1, ...) OR a pin token (A0, A1, ...)
-    int pin = -1;
-
-    if (isDigit((unsigned char)arg.charAt(0))) {
-        int ch = arg.toInt();
-        // Map numeric channel to PA<ch>
-        if (ch >= 0 && ch <= 9) {
-            pin = ch; // PA0..PA9 = pin 0..9 in STM32duino GenF1 layout
+    // CRC check on SEND frames that carry a 4-char CRC field
+    if (type == "SEND" && crcField.length() == 4) {
+        uint16_t expected = (uint16_t)strtoul(crcField.c_str(), nullptr, 16);
+        if (expected != proto_crc16(data)) {
+            sendErr(seq, "CRC_ERR");
+            return;
         }
-    } else {
-        pin = parsePin(arg);
     }
 
-    if (pin < 0) {
-        sendErr(seq, "BAD_PIN");
-        return;
-    }
-
-    pinMode(pin, INPUT_ANALOG);
-    int value = analogRead(pin);
-    sendDone(seq, String(value));
-}
-
-static void handlePwm(const String& seq, const String& pinToken, const String& valStr) {
-    int pin = parsePin(pinToken);
-    if (pin < 0) {
-        sendErr(seq, "BAD_PIN");
-        return;
-    }
-
-    int val = valStr.toInt();
-    if (val < 0 || val > 255) {
-        sendErr(seq, "BAD_VALUE");
-        return;
-    }
-
-    // Note: not every pin supports PWM on the Blue Pill — the caller should
-    // use known PWM-capable pins (PA8, PB0, PB1, PA0, PA1, PA2, PA3...).
-    // analogWrite on a non-PWM pin silently falls back to digital behaviour
-    // in some STM32duino versions; there is no portable way to test at runtime
-    // without the variant's pwm table.
-    analogWrite(pin, val);
-    sendDone(seq, "PWM:" + pinToken + ":" + String(val));
-}
-
-static void handleGpioSet(const String& seq, const String& pinToken, const String& valStr) {
-    int pin = parsePin(pinToken);
-    if (pin < 0) {
-        sendErr(seq, "BAD_PIN");
-        return;
-    }
-
-    int val = valStr.toInt();
-    if (val != 0 && val != 1) {
-        sendErr(seq, "BAD_VALUE");
-        return;
-    }
-
-    pinMode(pin, OUTPUT);
-    digitalWrite(pin, val ? HIGH : LOW);
-    sendDone(seq, "SET:" + pinToken + ":" + String(val));
-}
-
-static void handleGpioGet(const String& seq, const String& pinToken) {
-    int pin = parsePin(pinToken);
-    if (pin < 0) {
-        sendErr(seq, "BAD_PIN");
-        return;
-    }
-
-    pinMode(pin, INPUT);
-    int val = digitalRead(pin);
-    sendDone(seq, String(val));
-}
-
-static void handleStatus(const String& seq) {
-    String msg = "STM32F103C8 slave v";
-    msg += FW_VERSION;
-    msg += " uptime:";
-    msg += String(millis());
-    msg += "ms";
-    sendDone(seq, msg);
-}
-
-// ---------------------------------------------------------------------------
-// Frame dispatcher — receives a fully parsed TYPE, SEQ, and DATA payload
-// ---------------------------------------------------------------------------
-
-static void dispatch(const String& type, const String& seq, const String& data) {
-    // --- Protocol control ---
-    if (type == "PING") {
-        sendLine("PONG");
-        return;
-    }
+    if (type == "PING")      { sendRaw("PONG");          return; }
+    if (type == "HEARTBEAT") { sendRaw("HEARTBEAT:ACK"); return; }
 
     if (type == "RESET") {
-        // Clear all protocol state
-        lastCompletedSeq    = "";
-        lastCompletedResult = "";
-        blinkStop();
-        sendLine("RESET:ACK");
+        lastDoneSeq = ""; lastDoneResult = "";
+        blinkPeriodMs = 0;
+        sendRaw("RESET:ACK");
         return;
     }
-
-    if (type == "FREE") {
-        // Master acknowledged DONE for SEQ; we can discard it.
-        // We keep only the single last result so just leave it;
-        // no reply needed per spec.
-        return;
-    }
-
-    if (type == "POLL") {
-        if (seq == lastCompletedSeq && lastCompletedSeq.length() > 0) {
-            // Re-send the stored DONE so a lost reply is recoverable
-            sendLine("DONE:" + seq + ":" + lastCompletedResult);
+    if (type == "FREE")  { return; }
+    if (type == "POLL")  {
+        if (seq == lastDoneSeq && lastDoneSeq.length()) {
+            sendRaw("DONE:" + seq + ":" + proto_crc_str(lastDoneResult) + ":" + lastDoneResult);
         } else {
-            // Still running (or seq unknown) — report busy
-            sendLine("BUSY:" + seq);
+            sendRaw("BUSY:" + seq);
         }
         return;
     }
+    if (type != "SEND") { sendErr(seq.length() ? seq : "000", "UNKNOWN_FRAME"); return; }
 
-    if (type != "SEND") {
-        sendErr(seq, "UNKNOWN_FRAME");
-        return;
-    }
-
-    // --- SEND:NNN:CMD[:args...] ---
-    // Acknowledge receipt immediately before doing any work
     sendRecv(seq);
+    wdogAutoKick();
 
-    // Split DATA on ':' to extract command and optional arguments
-    String cmd  = data;
-    String arg1 = "";
-    String arg2 = "";
+    int colon  = data.indexOf(':');
+    String cmd  = (colon >= 0) ? data.substring(0, colon) : data;
+    String rest = (colon >= 0) ? data.substring(colon + 1) : "";
 
-    int c1 = data.indexOf(':');
-    if (c1 >= 0) {
-        cmd  = data.substring(0, c1);
-        String rest = data.substring(c1 + 1);
-        int c2 = rest.indexOf(':');
-        if (c2 >= 0) {
-            arg1 = rest.substring(0, c2);
-            arg2 = rest.substring(c2 + 1);
-        } else {
-            arg1 = rest;
-        }
-    }
-
-    cmd.trim();
-    arg1.trim();
-    arg2.trim();
-
-    // Dispatch on CMD (protocol uses uppercase; the master always sends uppercase)
-    if      (cmd == "LED")    { handleLed(seq, arg1); }
-    else if (cmd == "BLINK")  { handleBlink(seq, arg1); }
-    else if (cmd == "ADC")    { handleAdc(seq, arg1); }
-    else if (cmd == "PWM")    { handlePwm(seq, arg1, arg2); }
-    else if (cmd == "STATUS") { handleStatus(seq); }
-    else if (cmd == "GPIO") {
-        if      (arg1 == "SET") { handleGpioSet(seq, arg2, ""); }  // needs 3rd field
-        else if (arg1 == "GET") { handleGpioGet(seq, arg2); }
-        else                    { sendErr(seq, "BAD_ARG"); }
-    }
-    else {
-        sendErr(seq, "UNKNOWN_CMD");
-    }
-}
-
-// GPIO:SET and GPIO:GET need a dedicated re-parse because they carry
-// three sub-fields after SEND:NNN:  GPIO:SET:B5:1  or  GPIO:GET:B5
-// The generic dispatch above only splits DATA into cmd/arg1/arg2 which
-// works for LED:ON, PWM:A8:128 but not for GPIO:SET:B5:1 (four colons total).
-// Re-parse DATA specifically for GPIO here.
-
-static void dispatchGpio(const String& seq, const String& data) {
-    // data = "SET:B5:1" or "GET:B5"
-    int c1 = data.indexOf(':');
-    if (c1 < 0) { sendErr(seq, "BAD_ARG"); return; }
-
-    String op  = data.substring(0, c1);
-    String rest = data.substring(c1 + 1);
-
-    if (op == "SET") {
-        int c2 = rest.indexOf(':');
-        if (c2 < 0) { sendErr(seq, "BAD_ARG"); return; }
-        String pin = rest.substring(0, c2);
-        String val = rest.substring(c2 + 1);
-        handleGpioSet(seq, pin, val);
-    } else if (op == "GET") {
-        handleGpioGet(seq, rest);
-    } else {
-        sendErr(seq, "BAD_ARG");
-    }
+    if      (cmd == "GPIO")   handleGpio (seq, rest);
+    else if (cmd == "ADC")    handleAdc  (seq, rest);
+    else if (cmd == "PWM")    handlePwm  (seq, rest);
+    else if (cmd == "I2C")    handleI2c  (seq, rest);
+    else if (cmd == "SPI")    handleSpi  (seq, rest);
+    else if (cmd == "U2")     handleU2   (seq, rest);
+    else if (cmd == "EE")     handleEE   (seq, rest);
+    else if (cmd == "IRQ")    handleIrq  (seq, rest);
+    else if (cmd == "SYS")    handleSys  (seq, rest);
+    else if (cmd == "CALC")   handleCalc (seq, rest);
+    else if (cmd == "LED")    handleLed  (seq, rest);
+    else if (cmd == "BLINK")  handleBlink(seq, rest);
+    else if (cmd == "STATUS") handleSys  (seq, String("STATUS"));
+    else sendErr(seq, "UNKNOWN_CMD:" + cmd);
 }
 
 // ---------------------------------------------------------------------------
-// Full frame parser — called once a complete \n-terminated line is received
+// Line parser
 // ---------------------------------------------------------------------------
+
+static String rxBuf;
 
 static void processLine(const String& raw) {
     String line = raw;
     line.trim();
-    if (line.length() == 0) return;
+    if (!line.length()) return;
 
-    // Special case: bare PING / RESET (allowed without SEQ per spec)
-    if (line == "PING") { sendLine("PONG"); return; }
+    if (line == "PING")      { sendRaw("PONG");          return; }
+    if (line == "HEARTBEAT") { sendRaw("HEARTBEAT:ACK"); return; }
     if (line == "RESET") {
-        lastCompletedSeq    = "";
-        lastCompletedResult = "";
-        blinkStop();
-        sendLine("RESET:ACK");
+        lastDoneSeq = ""; lastDoneResult = "";
+        blinkPeriodMs = 0;
+        sendRaw("RESET:ACK");
         return;
     }
 
-    // General frame: TYPE:SEQ:DATA or TYPE:SEQ (no data)
-    int c1 = line.indexOf(':');
-    if (c1 < 0) {
-        sendErr("000", "MALFORMED");
-        return;
-    }
+    String parts[4];
+    int np = splitTokens(line, ':', parts, 4);
+    if (np < 1) { sendErr("000", "MALFORMED"); return; }
 
-    String type = line.substring(0, c1);
-    String rest = line.substring(c1 + 1);
+    String type = parts[0];
+    if (np == 1) { dispatch(type, "", "", ""); return; }
 
-    // Extract SEQ (next colon-separated field, must be 1-3 digits)
-    int c2 = rest.indexOf(':');
-    String seq;
-    String data;
-    if (c2 >= 0) {
-        seq  = rest.substring(0, c2);
-        data = rest.substring(c2 + 1);
-    } else {
-        seq  = rest;
-        data = "";
-    }
-
-    seq.trim();
-    data.trim();
-
-    // Validate SEQ: must be 1-3 digit string
+    String seq = parts[1];
     for (int i = 0; i < (int)seq.length(); i++) {
-        if (!isDigit((unsigned char)seq.charAt(i))) {
-            sendErr("000", "BAD_SEQ");
-            return;
-        }
+        if (!isDigit((unsigned char)seq.charAt(i))) { sendErr("000", "BAD_SEQ"); return; }
     }
 
-    // GPIO needs special handling due to extra colon in payload (GPIO:SET:PIN:VAL)
-    if (type == "SEND") {
-        // Peek at the command inside DATA to route GPIO differently
-        String cmd = data;
-        int dc = data.indexOf(':');
-        if (dc >= 0) cmd = data.substring(0, dc);
-
-        if (cmd == "GPIO") {
-            sendRecv(seq);
-            String gpioData = (dc >= 0) ? data.substring(dc + 1) : "";
-            dispatchGpio(seq, gpioData);
-            return;
-        }
-    }
-
-    dispatch(type, seq, data);
+    String crcF = (np >= 3) ? parts[2] : "";
+    String data = (np >= 4) ? parts[3] : "";
+    dispatch(type, seq, crcF, data);
 }
 
 // ---------------------------------------------------------------------------
-// Arduino entry points
+// Setup & loop
 // ---------------------------------------------------------------------------
 
 void setup() {
-    // Onboard LED — configure early so it doesn't float
-    pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, HIGH);  // active-low: HIGH = off at startup
+    pinMode(LED, OUTPUT);
+    digitalWrite(LED, HIGH);   // off (active-low)
 
-    // STM32duino GenF1: Serial1 maps to USART1 (PA9=TX, PA10=RX).
-    // Application mode uses 8N1; the bootloader used 8E1 — do NOT mix them.
-    Serial1.begin(UART_BAUD);
-
-    // 12-bit ADC resolution (STM32F1 native; Arduino default is 10-bit)
+    Serial1.begin(UART_BAUD);  // USART1 PA9/PA10, 8N1 — application mode
     analogReadResolution(12);
 
-    // Brief LED flash to confirm firmware booted (visible even without a console)
-    digitalWrite(LED_PIN, LOW);   delay(120);
-    digitalWrite(LED_PIN, HIGH);  delay(120);
-    digitalWrite(LED_PIN, LOW);   delay(120);
-    digitalWrite(LED_PIN, HIGH);
+    Wire.begin();
+    Wire.setClock(100000);
+    Wire.setWireTimeout(25000, true);
+    i2cInitialized = true;
+
+    irqInit();
+
+    // 3-flash boot confirmation
+    for (int i = 0; i < 3; i++) {
+        digitalWrite(LED, LOW);   delay(100);
+        digitalWrite(LED, HIGH);  delay(100);
+    }
+
+    rxBuf.reserve(RX_BUF_MAX);
 }
 
 void loop() {
-    // --- Transport: accumulate bytes into rxBuf until \n ---
     while (Serial1.available()) {
         char c = (char)Serial1.read();
         if (c == '\n') {
             processLine(rxBuf);
             rxBuf = "";
         } else if (c != '\r') {
-            // Guard against runaway input — drop oversized lines
-            if (rxBuf.length() < 128) {
+            if ((int)rxBuf.length() < RX_BUF_MAX) {
                 rxBuf += c;
+            } else {
+                sendErr("000", "LINE_OVERFLOW");
+                rxBuf = "";
             }
         }
     }
-
-    // --- Hardware tick: non-blocking blink engine ---
     blinkTick();
 }

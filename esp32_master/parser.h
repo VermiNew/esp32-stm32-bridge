@@ -1,0 +1,370 @@
+#pragma once
+/**
+ * parser.h — human command parser for esp32_master
+ *
+ * Translates CLI input (from Serial Monitor) into protocol DATA strings
+ * that are sent as  SEND:NNN:CCCC:DATA  to the STM32 slave.
+ *
+ * Returns:
+ *   "" if the command was handled locally (help, empty line)
+ *   "__PING__"  for a bare PING
+ *   "__RESET__" for a protocol reset
+ *   "__HB__"    for a manual heartbeat test
+ *   otherwise the DATA string to put inside a SEND frame
+ *
+ * All tokens are case-insensitive on input; protocol strings are uppercase.
+ */
+
+// Forward declarations
+void printHelp();
+void logErr(const String& msg);
+
+// Normalise a pin token to uppercase (e.g. "a0" -> "A0")
+static inline String normPin(const String& s) {
+    String t = s; t.toUpperCase(); return t;
+}
+
+static String parseHumanCmd(const String& raw) {
+    String input = raw; input.trim();
+    if (!input.length()) return "";
+
+    // Lowercase for matching, but we'll keep original tokens for pin names etc.
+    String low = input; low.toLowerCase();
+
+    // Tokenize on whitespace
+    String tok[10];
+    int ntok = 0;
+    {
+        int i = 0, slen = input.length();
+        while (i < slen && ntok < 10) {
+            while (i < slen && input.charAt(i) == ' ') i++;
+            if (i >= slen) break;
+            int start = i;
+            while (i < slen && input.charAt(i) != ' ') i++;
+            tok[ntok++] = input.substring(start, i);
+        }
+    }
+    if (!ntok) return "";
+
+    String t0 = tok[0]; t0.toLowerCase();
+
+    // ------------------------------------------------------------------ help
+    if (t0 == "help" || t0 == "?") { printHelp(); return ""; }
+
+    // ------------------------------------------------------------------ ping
+    if (t0 == "ping") return "__PING__";
+
+    // ------------------------------------------------------------------ reset
+    if (t0 == "reset") return "__RESET__";
+
+    // ------------------------------------------------------------------ heartbeat
+    if (t0 == "heartbeat" || t0 == "hb") return "__HB__";
+
+    // ------------------------------------------------------------------ gpio
+    if (t0 == "gpio") {
+        if (ntok < 2) { logErr("Usage: gpio mode|write|read|toggle|port ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+
+        if (t1 == "mode") {
+            if (ntok < 4) { logErr("Usage: gpio mode <pin> in|out|pu|pd|an|od"); return ""; }
+            String m = tok[3]; m.toUpperCase();
+            return "GPIO:MODE:" + normPin(tok[2]) + ":" + m;
+        }
+        if (t1 == "write" || t1 == "w") {
+            if (ntok < 4) { logErr("Usage: gpio write <pin> 0|1"); return ""; }
+            return "GPIO:WRITE:" + normPin(tok[2]) + ":" + tok[3];
+        }
+        if (t1 == "read" || t1 == "r") {
+            if (ntok < 3) { logErr("Usage: gpio read <pin>"); return ""; }
+            return "GPIO:READ:" + normPin(tok[2]);
+        }
+        if (t1 == "toggle" || t1 == "t") {
+            if (ntok < 3) { logErr("Usage: gpio toggle <pin>"); return ""; }
+            return "GPIO:TOGGLE:" + normPin(tok[2]);
+        }
+        if (t1 == "port") {
+            if (ntok < 3) { logErr("Usage: gpio port A|B|C"); return ""; }
+            String p = tok[2]; p.toUpperCase();
+            return "GPIO:PORT:" + p;
+        }
+        logErr("gpio sub-command: mode|write|read|toggle|port");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ adc
+    if (t0 == "adc") {
+        if (ntok < 2) { logErr("Usage: adc read|avg|mv|multi|temp|vref ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+
+        if (t1 == "read" || t1 == "r") {
+            if (ntok < 3) { logErr("Usage: adc read <pin>"); return ""; }
+            return "ADC:READ:" + normPin(tok[2]);
+        }
+        if (t1 == "avg") {
+            if (ntok < 4) { logErr("Usage: adc avg <pin> <samples>"); return ""; }
+            return "ADC:AVG:" + normPin(tok[2]) + ":" + tok[3];
+        }
+        if (t1 == "mv") {
+            if (ntok < 3) { logErr("Usage: adc mv <pin>"); return ""; }
+            return "ADC:MV:" + normPin(tok[2]);
+        }
+        if (t1 == "multi") {
+            // tok[2..] are comma-separated or space-separated pins
+            if (ntok < 3) { logErr("Usage: adc multi A0,A1,B0 OR adc multi A0 A1 B0"); return ""; }
+            // Check if tok[2] already has commas
+            String pinList;
+            if (tok[2].indexOf(',') >= 0) {
+                pinList = tok[2]; pinList.toUpperCase();
+            } else {
+                // Space-separated — join with comma
+                for (int i = 2; i < ntok; i++) {
+                    if (i > 2) pinList += ',';
+                    String p = tok[i]; p.toUpperCase(); pinList += p;
+                }
+            }
+            return "ADC:MULTI:" + pinList;
+        }
+        if (t1 == "temp") return "ADC:TEMP";
+        if (t1 == "vref") return "ADC:VREF";
+        logErr("adc sub-command: read|avg|mv|multi|temp|vref");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ pwm
+    if (t0 == "pwm") {
+        if (ntok < 2) { logErr("Usage: pwm set|freq|stop|read ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+
+        if (t1 == "set") {
+            if (ntok < 4) { logErr("Usage: pwm set <pin> <duty 0-1000>"); return ""; }
+            return "PWM:SET:" + normPin(tok[2]) + ":" + tok[3];
+        }
+        if (t1 == "freq") {
+            if (ntok < 5) { logErr("Usage: pwm freq <pin> <hz> <duty 0-1000>"); return ""; }
+            return "PWM:FREQ:" + normPin(tok[2]) + ":" + tok[3] + ":" + tok[4];
+        }
+        if (t1 == "stop") {
+            if (ntok < 3) { logErr("Usage: pwm stop <pin>"); return ""; }
+            return "PWM:STOP:" + normPin(tok[2]);
+        }
+        if (t1 == "read") {
+            if (ntok < 3) { logErr("Usage: pwm read <pin>"); return ""; }
+            return "PWM:READ:" + normPin(tok[2]);
+        }
+        logErr("pwm sub-command: set|freq|stop|read");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ i2c
+    if (t0 == "i2c") {
+        if (ntok < 2) { logErr("Usage: i2c scan|ping|write|read|wreg|rreg ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+
+        if (t1 == "scan") return "I2C:SCAN";
+        if (t1 == "ping") {
+            if (ntok < 3) { logErr("Usage: i2c ping <addr>"); return ""; }
+            return "I2C:PING:" + tok[2];
+        }
+        if (t1 == "write") {
+            if (ntok < 4) { logErr("Usage: i2c write <addr> <hexbytes>"); return ""; }
+            String h = tok[3]; h.toUpperCase();
+            return "I2C:WRITE:" + tok[2] + ":" + h;
+        }
+        if (t1 == "read") {
+            if (ntok < 4) { logErr("Usage: i2c read <addr> <n_bytes>"); return ""; }
+            return "I2C:READ:" + tok[2] + ":" + tok[3];
+        }
+        if (t1 == "wreg") {
+            if (ntok < 5) { logErr("Usage: i2c wreg <addr> <reg> <hexbytes>"); return ""; }
+            String h = tok[4]; h.toUpperCase();
+            return "I2C:WREG:" + tok[2] + ":" + tok[3] + ":" + h;
+        }
+        if (t1 == "rreg") {
+            if (ntok < 5) { logErr("Usage: i2c rreg <addr> <reg> <n_bytes>"); return ""; }
+            return "I2C:RREG:" + tok[2] + ":" + tok[3] + ":" + tok[4];
+        }
+        logErr("i2c sub-command: scan|ping|write|read|wreg|rreg");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ spi
+    if (t0 == "spi") {
+        if (ntok < 2) { logErr("Usage: spi begin|xfer|write|read|end ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+
+        if (t1 == "begin") {
+            if (ntok < 5) { logErr("Usage: spi begin <cs_pin> <mode 0-3> <freq_khz>"); return ""; }
+            return "SPI:BEGIN:" + normPin(tok[2]) + ":" + tok[3] + ":" + tok[4];
+        }
+        if (t1 == "xfer") {
+            if (ntok < 4) { logErr("Usage: spi xfer <cs_pin> <hexbytes>"); return ""; }
+            String h = tok[3]; h.toUpperCase();
+            return "SPI:XFER:" + normPin(tok[2]) + ":" + h;
+        }
+        if (t1 == "write") {
+            if (ntok < 4) { logErr("Usage: spi write <cs_pin> <hexbytes>"); return ""; }
+            String h = tok[3]; h.toUpperCase();
+            return "SPI:WRITE:" + normPin(tok[2]) + ":" + h;
+        }
+        if (t1 == "read") {
+            if (ntok < 4) { logErr("Usage: spi read <cs_pin> <n_bytes>"); return ""; }
+            return "SPI:READ:" + normPin(tok[2]) + ":" + tok[3];
+        }
+        if (t1 == "end") return "SPI:END";
+        logErr("spi sub-command: begin|xfer|write|read|end");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ u2
+    if (t0 == "u2") {
+        if (ntok < 2) { logErr("Usage: u2 cfg|tx|rx|flush|status|close ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+
+        if (t1 == "cfg") {
+            if (ntok < 3) { logErr("Usage: u2 cfg <baud> [bits parity stop]"); return ""; }
+            String r = "U2:CFG:" + tok[2];
+            if (ntok >= 6) r += ":" + tok[3] + ":" + tok[4] + ":" + tok[5];
+            return r;
+        }
+        if (t1 == "tx") {
+            if (ntok < 3) { logErr("Usage: u2 tx <hexbytes>"); return ""; }
+            String h = tok[2]; h.toUpperCase(); return "U2:TX:" + h;
+        }
+        if (t1 == "rx") {
+            if (ntok < 3) { logErr("Usage: u2 rx <n_bytes> [timeout_ms]"); return ""; }
+            String r = "U2:RX:" + tok[2];
+            if (ntok >= 4) r += ":" + tok[3];
+            return r;
+        }
+        if (t1 == "flush")  return "U2:FLUSH";
+        if (t1 == "status") return "U2:STATUS";
+        if (t1 == "close")  return "U2:CLOSE";
+        logErr("u2 sub-command: cfg|tx|rx|flush|status|close");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ ee
+    if (t0 == "ee") {
+        if (ntok < 2) { logErr("Usage: ee write|read|wrword|rdword|wrhex|rdhex|fill|size ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+
+        if (t1 == "write")  {
+            if (ntok < 4) { logErr("Usage: ee write <addr> <byte>"); return ""; }
+            return "EE:WRITE:" + tok[2] + ":" + tok[3];
+        }
+        if (t1 == "read")   { if (ntok < 3) { logErr("Usage: ee read <addr>"); return ""; } return "EE:READ:" + tok[2]; }
+        if (t1 == "wrword") {
+            if (ntok < 4) { logErr("Usage: ee wrword <addr> <uint32>"); return ""; }
+            return "EE:WRWORD:" + tok[2] + ":" + tok[3];
+        }
+        if (t1 == "rdword") { if (ntok < 3) { logErr("Usage: ee rdword <addr>"); return ""; } return "EE:RDWORD:" + tok[2]; }
+        if (t1 == "wrhex")  {
+            if (ntok < 4) { logErr("Usage: ee wrhex <addr> <hexbytes>"); return ""; }
+            String h = tok[3]; h.toUpperCase(); return "EE:WRHEX:" + tok[2] + ":" + h;
+        }
+        if (t1 == "rdhex")  {
+            if (ntok < 4) { logErr("Usage: ee rdhex <addr> <n_bytes>"); return ""; }
+            return "EE:RDHEX:" + tok[2] + ":" + tok[3];
+        }
+        if (t1 == "fill")   { if (ntok < 3) { logErr("Usage: ee fill <byte>"); return ""; } return "EE:FILL:" + tok[2]; }
+        if (t1 == "size")   return "EE:SIZE";
+        logErr("ee sub-command: write|read|wrword|rdword|wrhex|rdhex|fill|size");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ irq
+    if (t0 == "irq") {
+        if (ntok < 2) { logErr("Usage: irq attach|detach|poll|list ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+
+        if (t1 == "attach") {
+            if (ntok < 4) { logErr("Usage: irq attach <pin> rise|fall|change"); return ""; }
+            String m = tok[3]; m.toUpperCase();
+            return "IRQ:ATTACH:" + normPin(tok[2]) + ":" + m;
+        }
+        if (t1 == "detach") {
+            if (ntok < 3) { logErr("Usage: irq detach <pin>|all"); return ""; }
+            return "IRQ:DETACH:" + normPin(tok[2]);
+        }
+        if (t1 == "poll") return "IRQ:POLL";
+        if (t1 == "list") return "IRQ:LIST";
+        logErr("irq sub-command: attach|detach|poll|list");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ sys
+    if (t0 == "sys") {
+        if (ntok < 2) { logErr("Usage: sys status|uptime|chipid|cpufreq|fwver|reset|freeram|echo|wdog ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+
+        if (t1 == "status")  return "SYS:STATUS";
+        if (t1 == "uptime")  return "SYS:UPTIME";
+        if (t1 == "chipid")  return "SYS:CHIPID";
+        if (t1 == "cpufreq") return "SYS:CPUFREQ";
+        if (t1 == "fwver")   return "SYS:FWVER";
+        if (t1 == "freeram") return "SYS:FREERAM";
+        if (t1 == "reset")   return "SYS:RESET";
+        if (t1 == "echo") {
+            String txt = (ntok >= 3) ? tok[2] : "hello";
+            return "SYS:ECHO:" + txt;
+        }
+        if (t1 == "wdog") {
+            if (ntok < 3) { logErr("Usage: sys wdog en <ms>|kick|dis"); return ""; }
+            String t2 = tok[2]; t2.toUpperCase();
+            if (t2 == "EN") {
+                if (ntok < 4) { logErr("Usage: sys wdog en <ms>"); return ""; }
+                return "SYS:WDOG:EN:" + tok[3];
+            }
+            if (t2 == "KICK") return "SYS:WDOG:KICK";
+            if (t2 == "DIS")  return "SYS:WDOG:DIS";
+            logErr("sys wdog sub: en|kick|dis");
+            return "";
+        }
+        logErr("sys sub-command: status|uptime|chipid|cpufreq|fwver|reset|freeram|echo|wdog");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ calc
+    if (t0 == "calc") {
+        if (ntok < 2) { logErr("Usage: calc map|crc16|sqrt|constrain|abs ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+
+        if (t1 == "map") {
+            if (ntok < 8) { logErr("Usage: calc map <v> <in_min> <in_max> <out_min> <out_max>"); return ""; }
+            return "CALC:MAP:" + tok[2] + ":" + tok[3] + ":" + tok[4] + ":" + tok[5] + ":" + tok[6];
+        }
+        if (t1 == "crc16") {
+            if (ntok < 3) { logErr("Usage: calc crc16 <hexbytes>"); return ""; }
+            String h = tok[2]; h.toUpperCase(); return "CALC:CRC16:" + h;
+        }
+        if (t1 == "sqrt") {
+            if (ntok < 3) { logErr("Usage: calc sqrt <n>"); return ""; }
+            return "CALC:SQRT:" + tok[2];
+        }
+        if (t1 == "constrain") {
+            if (ntok < 5) { logErr("Usage: calc constrain <v> <lo> <hi>"); return ""; }
+            return "CALC:CONSTRAIN:" + tok[2] + ":" + tok[3] + ":" + tok[4];
+        }
+        if (t1 == "abs") {
+            if (ntok < 3) { logErr("Usage: calc abs <v>"); return ""; }
+            return "CALC:ABS:" + tok[2];
+        }
+        logErr("calc sub-command: map|crc16|sqrt|constrain|abs");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ legacy
+    if (t0 == "led") {
+        if (ntok < 2) { logErr("Usage: led on|off|status"); return ""; }
+        String t1 = tok[1]; t1.toUpperCase();
+        return "LED:" + t1;
+    }
+    if (t0 == "blink") {
+        if (ntok < 2) { logErr("Usage: blink <ms>  (0 = stop)"); return ""; }
+        return "BLINK:" + tok[1];
+    }
+    if (t0 == "status") return "SYS:STATUS";
+
+    logErr("Unknown command '" + tok[0] + "'. Type 'help'.");
+    return "";
+}
