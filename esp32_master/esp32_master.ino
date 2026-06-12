@@ -439,6 +439,16 @@ void printHelp() {
     Serial.println("  calc crc16 <hexbytes>");
     Serial.println("  calc sqrt <n> | calc constrain <v> <lo> <hi> | calc abs <v>");
     Serial.println();
+    Serial.println(CLR_AMBER "[ RTC  LSE crystal PC14/PC15 ]" CLR_RESET);
+    Serial.println("  rtc init                           start LSE oscillator");
+    Serial.println("  rtc status                         running? clock source?");
+    Serial.println("  rtc get                            date+time → YYYY-MM-DD HH:MM:SS DOW");
+    Serial.println("  rtc set YYYY-MM-DD HH:MM:SS        set date and time");
+    Serial.println("  rtc set YYYY MM DD HH MM SS        alternative syntax");
+    Serial.println("  rtc getts                          seconds since 2000-01-01");
+    Serial.println("  rtc settss <seconds>               set from epoch-2000 timestamp");
+    Serial.println("  rtc epoch                          Unix timestamp (since 1970)");
+    Serial.println();
     Serial.println(CLR_AMBER "[ Legacy ]" CLR_RESET);
     Serial.println("  led on|off|status  |  blink <ms>  |  status");
     Serial.println();

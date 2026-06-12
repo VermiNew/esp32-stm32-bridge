@@ -23,6 +23,7 @@
  *   IRQ   -- up to 8 GPIO external interrupts
  *   SYS   -- uptime, chip ID, CPU freq, IWDG watchdog, soft reset
  *   CALC  -- compute offload (map, crc16, sqrt, constrain, abs)
+ *   RTC   -- real-time clock, LSE crystal on PC14/PC15 (32.768 kHz)
  *
  * Frame format (v2):
  *   SEND:NNN:CCCC:CMD[:ARG1[:ARG2...]]
@@ -47,6 +48,7 @@
 #include "cmd_irq.h"
 #include "cmd_sys.h"
 #include "cmd_misc.h"
+#include "cmd_rtc.h"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -136,6 +138,7 @@ static void dispatch(const String& type, const String& seq,
     else if (cmd == "IRQ")    handleIrq  (seq, rest);
     else if (cmd == "SYS")    handleSys  (seq, rest);
     else if (cmd == "CALC")   handleCalc (seq, rest);
+    else if (cmd == "RTC")    handleRtc  (seq, rest);
     else if (cmd == "LED")    handleLed  (seq, rest);
     else if (cmd == "BLINK")  handleBlink(seq, rest);
     else if (cmd == "STATUS") handleSys  (seq, String("STATUS"));

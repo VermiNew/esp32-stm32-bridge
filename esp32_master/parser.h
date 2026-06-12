@@ -353,6 +353,65 @@ static String parseHumanCmd(const String& raw) {
         return "";
     }
 
+    // ------------------------------------------------------------------ rtc
+    if (t0 == "rtc") {
+        if (ntok < 2) { logErr("Usage: rtc init|status|get|getts|epoch|set|settss ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+
+        if (t1 == "init")   return "RTC:INIT";
+        if (t1 == "status") return "RTC:STATUS";
+        if (t1 == "get")    return "RTC:GET";
+        if (t1 == "getts")  return "RTC:GETTS";
+        if (t1 == "epoch")  return "RTC:EPOCH";
+
+        if (t1 == "set") {
+            // Accept two formats:
+            //   rtc set 2024 6 12 14 30 0           (7 space-separated tokens after "rtc set")
+            //   rtc set 2024-06-12 14:30:00          (date and time strings)
+            if (ntok >= 8) {
+                // space-separated: rtc set YYYY MM DD HH MM SS
+                return "RTC:SET:" + tok[2] + ":" + tok[3] + ":" + tok[4] +
+                       ":" + tok[5] + ":" + tok[6] + ":" + tok[7];
+            } else if (ntok >= 4) {
+                // two-arg format: rtc set YYYY-MM-DD HH:MM:SS
+                // tok[2] = "2024-06-12", tok[3] = "14:30:00"
+                String date = tok[2]; // "2024-06-12"
+                String time = tok[3]; // "14:30:00"
+                // Replace - and : with :
+                String d[3], t[3];
+                int di = 0, ti = 0, s = 0;
+                for (int i = 0; i <= (int)date.length(); i++) {
+                    char c = (i < (int)date.length()) ? date.charAt(i) : '-';
+                    if (c == '-' || i == (int)date.length()) {
+                        if (di < 3) d[di++] = date.substring(s, i);
+                        s = i + 1;
+                    }
+                }
+                s = 0;
+                for (int i = 0; i <= (int)time.length(); i++) {
+                    char c = (i < (int)time.length()) ? time.charAt(i) : ':';
+                    if (c == ':' || i == (int)time.length()) {
+                        if (ti < 3) t[ti++] = time.substring(s, i);
+                        s = i + 1;
+                    }
+                }
+                if (di < 3 || ti < 3) { logErr("Usage: rtc set YYYY-MM-DD HH:MM:SS"); return ""; }
+                return "RTC:SET:" + d[0] + ":" + d[1] + ":" + d[2] +
+                       ":" + t[0] + ":" + t[1] + ":" + t[2];
+            }
+            logErr("Usage: rtc set YYYY MM DD HH MM SS  OR  rtc set YYYY-MM-DD HH:MM:SS");
+            return "";
+        }
+
+        if (t1 == "settss") {
+            if (ntok < 3) { logErr("Usage: rtc settss <seconds_since_2000>"); return ""; }
+            return "RTC:SETTSS:" + tok[2];
+        }
+
+        logErr("rtc sub-command: init|status|get|getts|epoch|set|settss");
+        return "";
+    }
+
     // ------------------------------------------------------------------ legacy
     if (t0 == "led") {
         if (ntok < 2) { logErr("Usage: led on|off|status"); return ""; }
