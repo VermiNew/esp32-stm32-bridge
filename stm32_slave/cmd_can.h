@@ -15,7 +15,9 @@
  *   After CAN:BEGIN, do NOT use PWM on PB8/PB9.
  *
  * Commands (DATA field after SEND:NNN:CCCC:):
- *   CAN:BEGIN:SPEED_KBPS        init CAN (125 | 250 | 500 | 1000)
+ *   CAN:BEGIN:SPEED_KBPS              init CAN in normal mode (needs transceiver)
+ *   CAN:BEGIN:SPEED_KBPS:LOOPBACK     init in loopback mode   (NO transceiver needed)
+ *   CAN:BEGIN:SPEED_KBPS:SILENT       init in silent/listen-only mode (sniff only)
  *   CAN:TX:ID:HEX               send standard frame (11-bit ID, max 8 bytes)
  *   CAN:TXE:ID:HEX              send extended frame (29-bit ID)
  *   CAN:RX                      read next RX frame → "ID:HEX:EXT:RTR" or NONE
@@ -104,7 +106,7 @@ static const CanBitTiming CAN_TIMINGS[] = {
 };
 static const uint32_t CAN_SPEEDS[] = { 125, 250, 500, 1000 };
 
-static bool canBegin(uint32_t speedKbps) {
+static bool canBegin(uint32_t speedKbps, uint32_t canMode = CAN_MODE_NORMAL) {
     // Find timing entry
     const CanBitTiming* bt = nullptr;
     for (int i = 0; i < 4; i++) {
@@ -135,7 +137,7 @@ static bool canBegin(uint32_t speedKbps) {
     // CAN init
     hcan1.Instance                  = CAN1;
     hcan1.Init.Prescaler            = bt->psc;
-    hcan1.Init.Mode                 = CAN_MODE_NORMAL;
+    hcan1.Init.Mode                 = canMode;
     hcan1.Init.SyncJumpWidth        = CAN_SJW_1TQ;
     hcan1.Init.TimeSeg1             = (bt->seg1 - 1) << 16;  // HAL uses CAN_BS1_xTQ
     hcan1.Init.TimeSeg2             = (bt->seg2 - 1) << 20;
@@ -188,11 +190,22 @@ static void handleCan(const String& seq, const String& args) {
     if (sub == "BEGIN") {
         if (n < 2) { sendErr(seq, "CAN:MISSING_SPEED"); return; }
         uint32_t spd = (uint32_t)toks[1].toInt();
-        bool ok = canBegin(spd);
+
+        // Optional 3rd token: LOOPBACK | SILENT | NORMAL (default)
+        uint32_t hwMode = CAN_MODE_NORMAL;
+        String modeStr  = "NORMAL";
+        if (n >= 3) {
+            String m = toks[2]; m.toUpperCase();
+            if      (m == "LOOPBACK") { hwMode = CAN_MODE_LOOPBACK; modeStr = "LOOPBACK"; }
+            else if (m == "SILENT")   { hwMode = CAN_MODE_SILENT;   modeStr = "SILENT";   }
+            else if (m != "NORMAL")   { sendErr(seq, "CAN:BAD_MODE"); return; }
+        }
+
+        bool ok = canBegin(spd, hwMode);
         if (!ok) { sendErr(seq, "CAN:INIT_FAIL"); return; }
         canActive = true;
         canRxHead = canRxTail = 0;
-        sendDone(seq, "CAN:OK:" + String(spd) + "kbps:PB8/PB9");
+        sendDone(seq, "CAN:OK:" + String(spd) + "kbps:" + modeStr + ":PB8/PB9");
         return;
     }
 

@@ -201,7 +201,21 @@ def main():
     run_test(m, "CALC:ABS",        "calc abs -42",              r"\[OK\]\s+42")
     run_test(m, "CALC:CRC16",      "calc crc16 48656C6C6F",     r"\[OK\]\s+[0-9A-F]{4}")
 
-    # 10. RTC (soft-fail if no crystal)
+    # 10. CAN loopback (no transceiver needed)
+    info("CAN loopback test (no transceiver required):")
+    m.send("can begin 250 loopback")
+    can_init = m.wait_for(r"\[OK\]|\[ERR\]", 4)
+    if "[OK]" in can_init:
+        ok("[CAN:BEGIN:LOOPBACK] ready")
+        pass_count += 1
+        run_test(m, "CAN:TX loopback", "can tx 123 DEADBEEF",  r"\[OK\].*TX")
+        run_test(m, "CAN:RX loopback", "can rx",               r"\[OK\].*123.*DEAD")
+        run_test(m, "CAN:STATUS",      "can status",           r"\[OK\].*STATE")
+        run_test(m, "CAN:END",         "can end",              r"\[OK\].*OFF")
+    else:
+        warn("[CAN] Init failed — skipping CAN tests")
+
+    # 11. RTC (soft-fail if no crystal)
     info("RTC tests (require LSE crystal — soft fail if absent):")
     m.send("rtc init")
     rtc_init = m.wait_for(r"\[OK\]|\[ERR\]", 6)

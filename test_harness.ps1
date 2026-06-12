@@ -198,7 +198,22 @@ RunTest "CALC:CONSTRAIN hi"  "calc constrain 200 0 100"   '\[OK\]\s+100'
 RunTest "CALC:ABS"           "calc abs -42"               '\[OK\]\s+42'
 RunTest "CALC:CRC16"         "calc crc16 48656C6C6F"      '\[OK\]\s+[0-9A-F]{4}'
 
-# 10. RTC (if crystal is present — fail is acceptable if not configured)
+# 10. CAN loopback (no transceiver needed)
+info "CAN loopback test (no transceiver required):"
+$sp.WriteLine("can begin 250 loopback")
+$canInit = WaitForLine '\[OK\]|\[ERR\]' 4
+if ($canInit -match '\[OK\]') {
+    ok  "[CAN:BEGIN:LOOPBACK] ready"
+    $passCount++
+    RunTest "CAN:TX loopback"  "can tx 123 DEADBEEF"   '\[OK\].*TX'
+    RunTest "CAN:RX loopback"  "can rx"                 '\[OK\].*123.*DEAD'
+    RunTest "CAN:STATUS"       "can status"             '\[OK\].*STATE'
+    RunTest "CAN:END"          "can end"                '\[OK\].*OFF'
+} else {
+    warn "[CAN] Init failed — skipping CAN tests"
+}
+
+# 11. RTC (if crystal is present — fail is acceptable if not configured)
 info "RTC tests (require LSE crystal — soft fail if hardware absent):"
 $sp.WriteLine("rtc init")
 $rtcInit = WaitForLine '\[OK\]|\[ERR\]' 5
@@ -214,7 +229,7 @@ if ($rtcInit -match '\[OK\]') {
     warn "[RTC] Init failed or no crystal — skipping RTC tests"
 }
 
-# 11. Protocol stress: rapid ping x5
+# 12. Protocol stress: rapid ping x5
 info "Protocol stress: 5 rapid PINGs..."
 for ($i = 1; $i -le 5; $i++) {
     $sp.WriteLine("ping")
@@ -222,7 +237,7 @@ for ($i = 1; $i -le 5; $i++) {
     if ($r) { $passCount++ } else { $failCount++; fail "[PING #$i] no response" }
 }
 
-# 12. RESET and re-ping
+# 13. RESET and re-ping
 RunTest "PROTOCOL:RESET"     "reset"       'RESET:ACK|\[OK\]'
 Start-Sleep -Milliseconds 500
 RunTest "POST-RESET PING"    "ping"        '\[OK\].*PONG'

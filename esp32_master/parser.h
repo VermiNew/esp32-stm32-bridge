@@ -416,8 +416,10 @@ static String parseHumanCmd(const String& raw) {
         String t1 = tok[1]; t1.toLowerCase();
 
         if (t1 == "begin") {
-            if (ntok < 3) { logErr("Usage: can begin 125|250|500|1000"); return ""; }
-            return "CAN:BEGIN:" + tok[2];
+            if (ntok < 3) { logErr("Usage: can begin 125|250|500|1000 [loopback|silent|normal]"); return ""; }
+            String mode = (ntok >= 4) ? tok[3] : "normal";
+            mode.toUpperCase();
+            return "CAN:BEGIN:" + tok[2] + ":" + mode;
         }
         if (t1 == "tx" || t1 == "txe") {
             if (ntok < 4) { logErr("Usage: can tx <id> <hexbytes>"); return ""; }
