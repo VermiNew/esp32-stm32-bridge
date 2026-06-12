@@ -1,120 +1,216 @@
-# Supermikrokontroler — Contributor / Agent Guide
+# Supermikrokontroler v2 — Contributor / Agent Guide
 
-ESP32 master controls an STM32 Blue Pill slave over UART.
-Three Arduino sketches + flashing tooling.
+ESP32 master ↔ STM32 Blue Pill slave przez UART, protokół ASCII z CRC16.
 
 ---
 
-## Iterative workflow
+## Struktura projektu
 
-Never do a "waterfall" — never write large amounts of code in a single step.
+```
+supermikrokontroler/
+├── esp32_flasher/
+│   └── esp32_flasher.ino       USB↔UART bridge (8E1) do flashowania STM32
+├── esp32_master/
+│   ├── esp32_master.ino        główna pętla, state machine, heartbeat, wdog
+│   ├── parser.h                parser komend CLI → protocol DATA string
+│   └── protocol.h              CRC16, splitTokens, parsePin, hexUtils (kopia)
+├── stm32_slave/
+│   ├── stm32_slave.ino         setup/loop, router ramek, sendDone/sendErr
+│   ├── protocol.h              CRC16, splitTokens, parsePin, hexUtils (oryginał)
+│   ├── cmd_gpio.h              GPIO: MODE/WRITE/READ/TOGGLE/PORT
+│   ├── cmd_adc.h               ADC: READ/AVG/MV/MULTI/TEMP/VREF
+│   ├── cmd_pwm.h               PWM: SET/FREQ/STOP/READ
+│   ├── cmd_i2c.h               I2C: SCAN/PING/WRITE/READ/WREG/RREG
+│   ├── cmd_spi.h               SPI: BEGIN/XFER/WRITE/READ/END
+│   ├── cmd_u2.h                USART2: CFG/TX/RX/FLUSH/STATUS/CLOSE
+│   ├── cmd_ee.h                EEPROM: WRITE/READ/WRWORD/RDWORD/WRHEX/RDHEX/FILL
+│   ├── cmd_irq.h               IRQ: ATTACH/DETACH/POLL/LIST (8 slotów)
+│   ├── cmd_sys.h               SYS: STATUS/UPTIME/CHIPID/RESET/WDOG/...
+│   └── cmd_misc.h              CALC (MAP/CRC16/SQRT/...) + legacy LED/BLINK
+├── flash_script.ps1            PowerShell 7 wizard flashowania (Windows)
+├── flash_stm32.bat             prosty wrapper bat (Windows)
+├── flash_stm32.sh              wrapper bash (Linux/macOS)
+├── get_stm32flash.ps1          pobieranie + weryfikacja MD5 stm32flash (Windows)
+└── get_stm32flash.sh           pobieranie + weryfikacja MD5 stm32flash (Linux/macOS)
+```
 
-### Cycle
+---
 
-1. **Plan** — Define a small, concrete mini-step.
-2. **Pick the simplest part** — Build on verified ground.
-3. **Write code** — Implement only that small piece.
-4. **Read your own code** — Review before running anything.
-5. **Verify:**
-   - **Compile** — `arduino-cli compile` for the affected sketch (FQBNs below).
-     If unavailable, do a careful manual review and state compilation must be
-     confirmed in Arduino IDE.
-   - **Hardware check** — the human flashes and observes real behavior
-     (LED blinks, Serial Monitor output, `ping` → `PONG`). The agent cannot
-     do this step; it must ask the human and wait for the result.
-6. **Fix or commit:**
-   - Broken → fix → back to step 5.
-   - Working → commit with a Conventional Commit message.
-7. **Repeat** — pick the next small piece.
+## Iteracyjny workflow (OBOWIĄZKOWY)
+
+Każda zmiana = jeden mały, weryfikowalny krok.
+
+```
+Plan → Kod → Przeczytaj swój kod → Kompilacja → Test HW → Commit
+  ↑                                                           |
+  └───────────────────── następny krok ──────────────────────┘
+```
+
+### Zasady
+
+1. **Czytaj przed pisaniem** — przed modyfikacją pliku wywołaj `view`, żeby
+   zobaczyć aktualny stan. Nigdy nie edytuj z pamięci.
+2. **Jeden plik na raz** — nie zmieniaj jednocześnie slave i master.
+3. **Kompiluj po każdej zmianie** — patrz FQBNs poniżej.
+4. **Nie commituj nieskompilowanego kodu** — commit to nagroda za działający kod.
+5. **Nie używaj `git add .`** — tylko `git add <konkretne pliki>`.
+6. **Nie zmieniaj formatu protokołu** bez jednoczesnej zmiany obu stron.
 
 ### FQBNs
 
 ```bash
 # STM32 Blue Pill
-arduino-cli compile --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8 stm32_slave
+arduino-cli compile \
+  --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8 \
+  stm32_slave
 
-# ESP32
+# ESP32 master
 arduino-cli compile --fqbn esp32:esp32:esp32 esp32_master
+
+# ESP32 flasher
 arduino-cli compile --fqbn esp32:esp32:esp32 esp32_flasher
 ```
 
-Required cores: `esp32:esp32` (Espressif) and `STMicroelectronics:stm32` (stm32duino).
+---
+
+## Protokół v2 — pełna specyfikacja
+
+### Format ramki
+
+```
+SEND:NNN:CCCC:DATA\n       master → slave
+RECV:NNN\n                 slave → master (szybkie ACK przed wykonaniem)
+DONE:NNN:CCCC:RESULT\n     slave → master
+ERR:NNN:CCCC:REASON\n      slave → master
+BUSY:NNN\n                 slave → master (odpowiedź na POLL)
+POLL:NNN\n                 master → slave
+FREE:NNN\n                 master → slave (master odebrał DONE)
+PING / PONG
+HEARTBEAT / HEARTBEAT:ACK
+RESET / RESET:ACK
+```
+
+- `NNN` = 3-cyfrowy seq 001–999, wrap→001
+- `CCCC` = CRC16-CCITT (poly 0x1021, init 0xFFFF) nad polem DATA/RESULT
+- Ramki BEZ ładunku (RECV, BUSY, FREE, POLL) NIE mają pola CRC
+- Ramki kontrolne (PING, RESET, HEARTBEAT) są bare — bez SEQ
+
+### CRC16
+
+```cpp
+uint16_t proto_crc16(const char* data, size_t len) {
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= (uint16_t)(uint8_t)data[i] << 8;
+        for (int b = 0; b < 8; b++)
+            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
+    }
+    return crc;
+}
+```
+
+CRC liczony wyłącznie nad polem DATA (wszystko po trzecim dwukropku).
+
+### Timingsy (master)
+
+| Parametr | Wartość |
+|----------|---------|
+| TIMEOUT_RECV_MS | 300 ms |
+| TIMEOUT_DONE_MS | 2500 ms |
+| TIMEOUT_POLL_MS | 400 ms |
+| MAX_RETRY | 3 |
+| MAX_POLLS | 15 |
+| HEARTBEAT_INTERVAL_MS | 5000 ms |
+| HEARTBEAT_TIMEOUT_MS | 1500 ms |
+| HB_MAX_MISS | 3 |
+
+### Maszyna stanów mastera
+
+```
+IDLE ──SEND──► WAIT_RECV ──RECV──► WAIT_DONE ──DONE──► IDLE
+                  │                    │                  ▲
+                  │timeout×3           │timeout           │
+                  ▼                    ▼                   │
+                IDLE              POLLING ──DONE──────────┘
+                                     │
+                                  MAX_POLLS
+                                     │
+                                    IDLE (error)
+```
 
 ---
 
-## Conventional Commits
+## Numeracja pinów STM32duino GenF1
+
+Token → flat pin index: `pin = (port - 'A') * 16 + n`
+
+| Token | Flat idx | Funkcja alternatywna |
+|-------|---------|---------------------|
+| A0–A7 | 0–7 | ADC_IN0–IN7 |
+| A8–A11 | 8–11 | TIM1 CH1–CH4 (PWM) |
+| A9, A10 | 9, 10 | USART1 TX/RX (RESERVED dla mastera) |
+| A2, A3 | 2, 3 | USART2 TX/RX |
+| A5–A7 | 5–7 | SPI1 SCK/MISO/MOSI |
+| B0, B1 | 16, 17 | ADC_IN8/IN9, TIM3 CH3/CH4 |
+| B6, B7 | 22, 23 | I2C1 SCL/SDA, TIM4 CH1/CH2 |
+| B8, B9 | 24, 25 | TIM4 CH3/CH4, CAN RX/TX |
+| B10, B11 | 26, 27 | USART3 TX/RX, I2C2 SCL/SDA |
+| B12–B15 | 28–31 | SPI2 NSS/SCK/MISO/MOSI |
+| C13 | 45 | Onboard LED (active-low) |
+
+**USART1 (A9/A10) jest ZAREZERWOWANY** dla komunikacji master-slave.
+Nie używaj go w cmd_gpio.h ani nigdzie indziej.
+
+---
+
+## Bezpieczeństwo sprzętowe
+
+- **Nigdy 5V na STM32** — wszystkie sygnały 3.3V
+- **USART1 (PA9/PA10) reserved** — tylko dla protokołu master↔slave
+- **Bootloader 8E1** — esp32_flasher używa 8E1; aplikacja używa 8N1. Nie mieszaj.
+- **BOOT0=1** → bootloader ROM (PC13 nie miga)
+- **BOOT0=0** → aplikacja (PC13 miga 3× przy boot)
+- **IWDG nie da się wyłączyć** — po `sys wdog en` STM32 będzie się resetował
+  bez regularnych kick'ów. Master automatycznie wysyła kick co `ms/2`.
+- **Flash wear** — `EE:WRITE` commituje flash. Max ~10 000 cykli na stronę.
+  Nie używaj w pętli szybszej niż co 100 ms.
+- **SPI + ADC conflict** — PA5/PA6/PA7 to jednocześnie SPI1 i piny ADC.
+  Po `spi begin` ADC na tych pinach nie działa.
+
+---
+
+## Konwencja commitów
 
 ```
 <type>(<scope>): <description>
+
+type:  feat | fix | refactor | docs | chore | test
+scope: stm32-slave | esp32-master | esp32-flasher | tooling | docs | protocol
 ```
 
-Scopes: `stm32-slave`, `esp32-master`, `esp32-flasher`, `tooling`, `docs`.
-
-Types: `feat`, `fix`, `style`, `refactor`, `docs`, `chore`, `test`.
-
-A commit is a **reward for working (compilable) code**, not for written code.
-
----
-
-## Protocol reference
-
-Frame format: `TYPE:SEQ:DATA\n`  
-SEQ = 3-digit zero-padded (001..999, wraps to 001). Both sides must agree byte-for-byte.
-
-| Frame | Direction | Meaning |
-|-------|-----------|---------|
-| `SEND:NNN:CMD` | M→S | Execute CMD |
-| `RECV:NNN` | S→M | Fast ACK |
-| `DONE:NNN:RESULT` | S→M | Result |
-| `BUSY:NNN` | S→M | Reply to POLL |
-| `POLL:NNN` | M→S | Query status |
-| `FREE:NNN` | M→S | Release slot |
-| `ERR:NNN:REASON` | either | Error |
-| `PING` / `PONG` | M→S / S→M | Link test |
-| `RESET` | either | Resync |
-
-Master timings: `TIMEOUT_RECV=300ms`, `TIMEOUT_DONE=2000ms`,
-`TIMEOUT_POLL=400ms`, `MAX_RETRY=3`, `MAX_POLLS=15`.
+Przykłady:
+```
+feat(stm32-slave): add U3 handler for USART3
+fix(protocol): handle CRC miss gracefully without loop reset
+docs: update AGENTS.md with USART3 pin mapping
+```
 
 ---
 
-## Pin naming (slave)
+## Checklist przed commitem
 
-Token format: `A<n>`, `B<n>`, `C<n>` where n=0..15.  
-Maps to STM32duino flat pin index: `pin = (port - 'A') * 16 + n`.  
-So PA0=0, PB0=16, PC13=45.
-
----
-
-## Hardware safety
-
-- **NEVER connect 5V to any STM32 pin.** 3.3V only.
-- Bootloader UART: USART1 (PA9/PA10), 115200 **8E1** (even parity).
-- Application UART: same pins, 115200 **8N1**. Do NOT mix them.
-- BOOT0=1 → bootloader (PC13 does NOT blink).
-- BOOT0=0 → run application (PC13 blinks 3× on boot).
-- ESP32 bridge uses GPIO16 (RX2) / GPIO17 (TX2) — NOT the "TX/RX" silkscreen pins.
+- [ ] Sketch kompiluje się bez błędów dla docelowego FQBN
+- [ ] Brak nowych ostrzeżeń kompilatora
+- [ ] Brak `delay()` w `loop()` ani w handlerach komend
+- [ ] Format ramki protokołu niezmieniony (chyba że to jest commit zmiany protokołu)
+- [ ] Obie strony (slave + master) zaktualizowane przy zmianie protokołu
+- [ ] `protocol.h` jest identyczny w `stm32_slave/` i `esp32_master/`
+- [ ] Bezpieczeństwo sprzętowe zachowane (3.3V, 8E1 vs 8N1, PA9/PA10 zarezerwowane)
+- [ ] Nie ma `git add .` w historii
 
 ---
 
-## Code hygiene
+## Kod w języku angielskim
 
-- **Everything in code is English**: identifiers, comments, Serial output, README.
-  The only Polish is in the live chat with the human.
-- All source files are UTF-8, no BOM.
-- No `delay()` in main loops — use `millis()`.
-- No new libraries without asking the human.
-- Comments explain WHY, not what.
-- Never `git add .` or `git add -A` — stage only intentionally changed files.
-- Never run destructive git commands without explicit approval.
-- Read existing code before modifying it.
-
----
-
-## Safety checklist before every commit
-
-- [ ] Sketch compiles cleanly for its target FQBN.
-- [ ] No warnings introduced.
-- [ ] No `delay()` in `loop()`.
-- [ ] Protocol frame format unchanged (unless this is a protocol change commit).
-- [ ] Hardware safety advice is accurate (3.3V, 8E1 vs 8N1, correct GPIO pins).
+Wszystkie identyfikatory, komentarze i wyjścia Serial są po angielsku.
+Jedynym wyjątkiem jest live chat z człowiekiem — to po polsku.
