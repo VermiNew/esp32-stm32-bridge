@@ -49,6 +49,8 @@
 #include "cmd_sys.h"
 #include "cmd_misc.h"
 #include "cmd_rtc.h"
+#include "cmd_u3.h"
+#include "cmd_can.h"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -131,14 +133,17 @@ static void dispatch(const String& type, const String& seq,
     if      (cmd == "GPIO")   handleGpio (seq, rest);
     else if (cmd == "ADC")    handleAdc  (seq, rest);
     else if (cmd == "PWM")    handlePwm  (seq, rest);
-    else if (cmd == "I2C")    handleI2c  (seq, rest);
+    else if (cmd == "I2C")    handleI2c  (seq, rest, 1);
+    else if (cmd == "I2C2")   handleI2c  (seq, rest, 2);
     else if (cmd == "SPI")    handleSpi  (seq, rest);
     else if (cmd == "U2")     handleU2   (seq, rest);
+    else if (cmd == "U3")     handleU3   (seq, rest);
     else if (cmd == "EE")     handleEE   (seq, rest);
     else if (cmd == "IRQ")    handleIrq  (seq, rest);
     else if (cmd == "SYS")    handleSys  (seq, rest);
     else if (cmd == "CALC")   handleCalc (seq, rest);
     else if (cmd == "RTC")    handleRtc  (seq, rest);
+    else if (cmd == "CAN")    handleCan  (seq, rest);
     else if (cmd == "LED")    handleLed  (seq, rest);
     else if (cmd == "BLINK")  handleBlink(seq, rest);
     else if (cmd == "STATUS") handleSys  (seq, String("STATUS"));

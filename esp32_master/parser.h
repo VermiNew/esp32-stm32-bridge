@@ -126,7 +126,11 @@ static String parseHumanCmd(const String& raw) {
         }
         if (t1 == "temp") return "ADC:TEMP";
         if (t1 == "vref") return "ADC:VREF";
-        logErr("adc sub-command: read|avg|mv|multi|temp|vref");
+        if (t1 == "stream") {
+            if (ntok < 5) { logErr("Usage: adc stream <pin> <n_samples 1-48> <interval_ms>"); return ""; }
+            return "ADC:STREAM:" + normPin(tok[2]) + ":" + tok[3] + ":" + tok[4];
+        }
+        logErr("adc sub-command: read|avg|mv|multi|temp|vref|stream");
         return "";
     }
 
@@ -353,6 +357,129 @@ static String parseHumanCmd(const String& raw) {
         return "";
     }
 
+    // ------------------------------------------------------------------ i2c2
+    if (t0 == "i2c2") {
+        // Reuse i2c logic — just prefix "I2C2" instead of "I2C"
+        if (ntok < 2) { logErr("Usage: i2c2 cfg|scan|ping|write|read|wreg|rreg ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+        if (t1 == "cfg") {
+            if (ntok < 3) { logErr("Usage: i2c2 cfg 100|400"); return ""; }
+            return "I2C2:CFG:" + tok[2];
+        }
+        if (t1 == "scan") return "I2C2:SCAN";
+        if (t1 == "ping") {
+            if (ntok < 3) { logErr("Usage: i2c2 ping <addr>"); return ""; }
+            return "I2C2:PING:" + tok[2];
+        }
+        if (t1 == "write") {
+            if (ntok < 4) { logErr("Usage: i2c2 write <addr> <hexbytes>"); return ""; }
+            String h = tok[3]; h.toUpperCase(); return "I2C2:WRITE:" + tok[2] + ":" + h;
+        }
+        if (t1 == "read") {
+            if (ntok < 4) { logErr("Usage: i2c2 read <addr> <n>"); return ""; }
+            return "I2C2:READ:" + tok[2] + ":" + tok[3];
+        }
+        if (t1 == "wreg") {
+            if (ntok < 5) { logErr("Usage: i2c2 wreg <addr> <reg> <hexbytes>"); return ""; }
+            String h = tok[4]; h.toUpperCase(); return "I2C2:WREG:" + tok[2] + ":" + tok[3] + ":" + h;
+        }
+        if (t1 == "rreg") {
+            if (ntok < 5) { logErr("Usage: i2c2 rreg <addr> <reg> <n>"); return ""; }
+            return "I2C2:RREG:" + tok[2] + ":" + tok[3] + ":" + tok[4];
+        }
+        logErr("i2c2 sub: cfg|scan|ping|write|read|wreg|rreg");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ u3
+    if (t0 == "u3") {
+        if (ntok < 2) { logErr("Usage: u3 cfg|tx|rx|flush|status|close ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+        if (t1 == "cfg") {
+            if (ntok < 3) { logErr("Usage: u3 cfg <baud> [bits parity stop]"); return ""; }
+            String r = "U3:CFG:" + tok[2];
+            if (ntok >= 6) r += ":" + tok[3] + ":" + tok[4] + ":" + tok[5];
+            return r;
+        }
+        if (t1 == "tx")     { if (ntok<3){logErr("u3 tx <hex>");return"";}  String h=tok[2];h.toUpperCase();return "U3:TX:"+h; }
+        if (t1 == "rx")     { if (ntok<3){logErr("u3 rx <n> [ms]");return "";} String r="U3:RX:"+tok[2]; if(ntok>=4)r+=":"+tok[3]; return r; }
+        if (t1 == "flush")  return "U3:FLUSH";
+        if (t1 == "status") return "U3:STATUS";
+        if (t1 == "close")  return "U3:CLOSE";
+        logErr("u3 sub: cfg|tx|rx|flush|status|close");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ can
+    if (t0 == "can") {
+        if (ntok < 2) { logErr("Usage: can begin|tx|txe|rx|filter|status|end ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+
+        if (t1 == "begin") {
+            if (ntok < 3) { logErr("Usage: can begin 125|250|500|1000"); return ""; }
+            return "CAN:BEGIN:" + tok[2];
+        }
+        if (t1 == "tx" || t1 == "txe") {
+            if (ntok < 4) { logErr("Usage: can tx <id> <hexbytes>"); return ""; }
+            String h = tok[3]; h.toUpperCase();
+            String cmd = (t1 == "txe") ? "CAN:TXE:" : "CAN:TX:";
+            return cmd + tok[2] + ":" + h;
+        }
+        if (t1 == "rx")     return "CAN:RX";
+        if (t1 == "status") return "CAN:STATUS";
+        if (t1 == "end")    return "CAN:END";
+        if (t1 == "filter") {
+            if (ntok < 3) { logErr("Usage: can filter <id> <mask>  OR  can filter off"); return ""; }
+            if (tok[2].equalsIgnoreCase("off")) return "CAN:FILTER:OFF";
+            if (ntok < 4) { logErr("Usage: can filter <id> <mask>"); return ""; }
+            return "CAN:FILTER:" + tok[2] + ":" + tok[3];
+        }
+        logErr("can sub: begin|tx|txe|rx|filter|status|end");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ wifi
+    if (t0 == "wifi") {
+        if (ntok < 2) { logErr("Usage: wifi connect|status|disconnect|scan ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+
+        if (t1 == "connect") {
+            if (ntok < 4) { logErr("Usage: wifi connect <ssid> <password>"); return ""; }
+            // Spaces in SSID/password: rejoin from tok[2..] up to last
+            String ssid = tok[2];
+            String pass = tok[3];
+            storedSsid = ssid;
+            storedPass = pass;
+            wifiConnect(ssid, pass);
+            return "";   // handled locally
+        }
+        if (t1 == "status")     { wifiStatus();                   return ""; }
+        if (t1 == "disconnect") { WiFi.disconnect(true); logOk("Disconnected."); return ""; }
+        if (t1 == "scan")       { wifiScan();                     return ""; }
+        logErr("wifi sub: connect|status|disconnect|scan");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ ntp
+    if (t0 == "ntp") {
+        if (ntok < 2) { logErr("Usage: ntp sync|status|server ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+
+        if (t1 == "sync")   { ntpSync();  return ""; }
+        if (t1 == "status") { ntpStatus(); return ""; }
+        if (t1 == "server") {
+            if (ntok < 3) { logErr("Usage: ntp server <hostname>"); return ""; }
+            ntpServer = tok[2];
+            logOk("NTP server set to: " + ntpServer);
+            return "";
+        }
+        logErr("ntp sub: sync|status|server");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ adc stream (shortcut)
+    // Already handled by "adc stream ..." in the adc block above,
+    // but keep an alias for convenience:
     // ------------------------------------------------------------------ rtc
     if (t0 == "rtc") {
         if (ntok < 2) { logErr("Usage: rtc init|status|get|getts|epoch|set|settss ..."); return ""; }

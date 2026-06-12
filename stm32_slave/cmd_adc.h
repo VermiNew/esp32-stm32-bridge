@@ -145,5 +145,37 @@ static void handleAdc(const String& seq, const String& args) {
         return;
     }
 
+    // ----- STREAM (blocking burst sample, packed as big-endian 16-bit hex) -----
+    // ADC:STREAM:PIN:N:INTERVAL_MS
+    // Returns N 12-bit samples packed as 4-hex-char words: "0FFF0ABC..."
+    // Max N=48 (48*4=192 chars), max blocking time=N*INTERVAL_MS.
+    // For N>16 with long intervals, TIMEOUT_DONE on master will switch to
+    // polling automatically — this is expected behaviour.
+    if (sub == "STREAM") {
+        if (n < 4) { sendErr(seq, "ADC:STREAM:MISSING_ARGS"); return; }
+        toks[1].toUpperCase();
+        int pin = parsePin(toks[1]);
+        if (pin < 0) { sendErr(seq, "ADC:BAD_PIN"); return; }
+
+        int samples  = constrain(toks[2].toInt(), 1, 48);
+        int interval = constrain(toks[3].toInt(), 0, 10000);
+
+        pinMode(pin, INPUT_ANALOG);
+
+        // Pre-allocate result string: 4 hex chars per sample
+        String result;
+        result.reserve(samples * 4 + 1);
+
+        char hex[5];
+        for (int i = 0; i < samples; i++) {
+            uint16_t v = (uint16_t)analogRead(pin);
+            snprintf(hex, sizeof(hex), "%04X", v);
+            result += hex;
+            if (interval > 0 && i < samples - 1) delay(interval);
+        }
+        sendDone(seq, result);
+        return;
+    }
+
     sendErr(seq, "ADC:UNKNOWN_SUB");
 }

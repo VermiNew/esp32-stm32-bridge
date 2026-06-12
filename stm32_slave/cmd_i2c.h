@@ -1,25 +1,24 @@
 #pragma once
 /**
- * cmd_i2c.h — I2C (Wire) commands for stm32_slave
+ * cmd_i2c.h — I2C (Wire / Wire2) commands for stm32_slave
  *
- * Default pins (I2C1, STM32duino GenF1):
- *   PB6 = SCL,  PB7 = SDA  (or PB8/PB9 with remap — not handled here)
+ * I2C1 default pins (STM32duino GenF1): PB6=SCL, PB7=SDA
+ * I2C2 default pins:                    PB10=SCL, PB11=SDA
  *
- * Commands (DATA field after SEND:NNN:CCCC:):
- *   I2C:SCAN               scan 0x08..0x77 → comma-separated hex addresses, or NONE
- *   I2C:WRITE:ADDR:HEX     write bytes to device, ADDR in hex (e.g. 68)
- *   I2C:READ:ADDR:N        read N bytes → uppercase hex string, or ERR
- *   I2C:WREG:ADDR:REG:HEX  write register: send REG byte then data bytes
- *   I2C:RREG:ADDR:REG:N    write REG then read N bytes → hex string
- *   I2C:PING:ADDR          check if a device ACKs at ADDR → ACK or NAK
+ * ⚠ I2C2 pins PB10/PB11 are shared with USART3 TX/RX.
+ *   Do NOT use I2C2 and U3 simultaneously.
  *
- * ADDR is decimal or 0x-prefixed hex (e.g. "104" or "0x68" — both = MPU6050).
- * REG  is decimal or 0x-prefixed hex.
- * HEX  is hex bytes string e.g. "FF00AB".
- * N    max = 32 bytes per transaction (Wire buffer limit).
+ * Commands:
+ *   I2C:CFG:SPEED_KHZ        change I2C1 speed (100 | 400)
+ *   I2C:SCAN                 scan I2C1 bus
+ *   I2C:PING:ADDR            probe I2C1
+ *   I2C:WRITE:ADDR:HEX
+ *   I2C:READ:ADDR:N
+ *   I2C:WREG:ADDR:REG:HEX
+ *   I2C:RREG:ADDR:REG:N
  *
- * Wire.begin() is called in setup() of stm32_slave.ino.
- * Timeout 25 ms is set to prevent hanging on bus errors.
+ * Same sub-commands via I2C2: prefix → uses Wire2 / I2C2 bus.
+ * Route: stm32_slave.ino dispatches "I2C2" → handleI2c(seq, rest, 2)
  */
 
 #include <Wire.h>
@@ -27,28 +26,43 @@
 void sendDone(const String& seq, const String& result);
 void sendErr (const String& seq, const String& reason);
 
-static bool i2cInitialized = false;
+static bool i2cInitialized  = false;
+static bool i2c2Initialized = false;
 
-static void ensureI2C() {
-    if (!i2cInitialized) {
-        Wire.begin();
-        Wire.setClock(100000);  // 100 kHz standard mode
-        // STM32duino supports setWireTimeout to avoid infinite hang
-        Wire.setWireTimeout(25000, true);  // 25 ms, reset on timeout
-        i2cInitialized = true;
+static TwoWire* getWireBus(int bus) {
+    return (bus == 2) ? &Wire2 : &Wire;
+}
+
+static void ensureI2CBus(int bus) {
+    if (bus == 2) {
+        if (!i2c2Initialized) {
+            Wire2.begin();
+            Wire2.setClock(100000);
+            Wire2.setWireTimeout(25000, true);
+            i2c2Initialized = true;
+        }
+    } else {
+        if (!i2cInitialized) {
+            Wire.begin();
+            Wire.setClock(100000);
+            Wire.setWireTimeout(25000, true);
+            i2cInitialized = true;
+        }
     }
 }
 
-// Parse address/register token: accepts decimal or "0x" prefixed hex.
+// Keep old name for callers in stm32_slave.ino setup()
+static void ensureI2C() { ensureI2CBus(1); }
+
 static int parseHexOrDec(const String& s) {
-    if (s.startsWith("0x") || s.startsWith("0X")) {
+    if (s.startsWith("0x") || s.startsWith("0X"))
         return (int)strtol(s.c_str() + 2, nullptr, 16);
-    }
     return s.toInt();
 }
 
-static void handleI2c(const String& seq, const String& args) {
-    ensureI2C();
+static void handleI2c(const String& seq, const String& args, int bus = 1) {
+    ensureI2CBus(bus);
+    TwoWire* w = getWireBus(bus);
 
     String toks[5];
     int n = splitTokens(args, ':', toks, 5);
@@ -56,12 +70,22 @@ static void handleI2c(const String& seq, const String& args) {
 
     const String& sub = toks[0];
 
+    // ----- CFG -----
+    if (sub == "CFG") {
+        if (n < 2) { sendErr(seq, "I2C:CFG:MISSING_SPEED"); return; }
+        uint32_t spd = (uint32_t)toks[1].toInt();
+        if (spd != 100 && spd != 400) { sendErr(seq, "I2C:CFG:BAD_SPEED"); return; }
+        w->setClock(spd * 1000UL);
+        sendDone(seq, "I2C" + String(bus) + ":SPEED:" + String(spd) + "kHz");
+        return;
+    }
+
     // ----- SCAN -----
     if (sub == "SCAN") {
         String found;
         for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
-            Wire.beginTransmission(addr);
-            uint8_t err = Wire.endTransmission();
+            w->beginTransmission(addr);
+            uint8_t err = w->endTransmission();
             if (err == 0) {
                 if (found.length()) found += ',';
                 char buf[5]; snprintf(buf, sizeof(buf), "0x%02X", addr);
@@ -77,9 +101,8 @@ static void handleI2c(const String& seq, const String& args) {
     if (sub == "PING") {
         if (n < 2) { sendErr(seq, "I2C:MISSING_ADDR"); return; }
         int addr = parseHexOrDec(toks[1]);
-        Wire.beginTransmission((uint8_t)addr);
-        uint8_t err = Wire.endTransmission();
-        sendDone(seq, err == 0 ? "ACK" : "NAK");
+        w->beginTransmission((uint8_t)addr);
+        sendDone(seq, w->endTransmission() == 0 ? "ACK" : "NAK");
         return;
     }
 
@@ -90,36 +113,27 @@ static void handleI2c(const String& seq, const String& args) {
         uint8_t buf[32];
         int len = hexToBytes(toks[2], buf, sizeof(buf));
         if (len < 0) { sendErr(seq, "I2C:BAD_HEX"); return; }
-
-        Wire.beginTransmission((uint8_t)addr);
-        Wire.write(buf, (size_t)len);
-        uint8_t err = Wire.endTransmission();
-        if (err != 0) {
-            char e[16]; snprintf(e, sizeof(e), "NACK:%d", err);
-            sendErr(seq, String(e));
-        } else {
-            sendDone(seq, "OK:" + String(len) + "B");
-        }
+        w->beginTransmission((uint8_t)addr);
+        w->write(buf, (size_t)len);
+        uint8_t err = w->endTransmission();
+        if (err) { char e[12]; snprintf(e, sizeof(e), "NACK:%d", err); sendErr(seq, String(e)); }
+        else      { sendDone(seq, "OK:" + String(len) + "B"); }
         return;
     }
 
     // ----- READ -----
     if (sub == "READ") {
         if (n < 3) { sendErr(seq, "I2C:MISSING_ARGS"); return; }
-        int addr = parseHexOrDec(toks[1]);
         int count = constrain(toks[2].toInt(), 1, 32);
-
-        uint8_t received = Wire.requestFrom((uint8_t)addr, (uint8_t)count);
-        if (received == 0) { sendErr(seq, "I2C:NO_DATA"); return; }
-
-        uint8_t buf[32];
-        int idx = 0;
-        while (Wire.available() && idx < 32) buf[idx++] = Wire.read();
+        uint8_t got = w->requestFrom((uint8_t)parseHexOrDec(toks[1]), (uint8_t)count);
+        if (!got) { sendErr(seq, "I2C:NO_DATA"); return; }
+        uint8_t buf[32]; int idx = 0;
+        while (w->available() && idx < 32) buf[idx++] = w->read();
         sendDone(seq, bytesToHex(buf, idx));
         return;
     }
 
-    // ----- WREG (write register) -----
+    // ----- WREG -----
     if (sub == "WREG") {
         if (n < 4) { sendErr(seq, "I2C:MISSING_ARGS"); return; }
         int addr = parseHexOrDec(toks[1]);
@@ -127,44 +141,32 @@ static void handleI2c(const String& seq, const String& args) {
         uint8_t buf[32];
         int len = hexToBytes(toks[3], buf, sizeof(buf));
         if (len < 0) { sendErr(seq, "I2C:BAD_HEX"); return; }
-
-        Wire.beginTransmission((uint8_t)addr);
-        Wire.write((uint8_t)reg);
-        Wire.write(buf, (size_t)len);
-        uint8_t err = Wire.endTransmission();
-        if (err != 0) {
-            char e[16]; snprintf(e, sizeof(e), "NACK:%d", err);
-            sendErr(seq, String(e));
-        } else {
-            sendDone(seq, "OK:" + String(len) + "B");
-        }
+        w->beginTransmission((uint8_t)addr);
+        w->write((uint8_t)reg);
+        w->write(buf, (size_t)len);
+        uint8_t err = w->endTransmission();
+        if (err) { char e[12]; snprintf(e, sizeof(e), "NACK:%d", err); sendErr(seq, String(e)); }
+        else      { sendDone(seq, "OK:" + String(len) + "B"); }
         return;
     }
 
-    // ----- RREG (write register pointer, then read) -----
+    // ----- RREG -----
     if (sub == "RREG") {
         if (n < 4) { sendErr(seq, "I2C:MISSING_ARGS"); return; }
         int addr  = parseHexOrDec(toks[1]);
         int reg   = parseHexOrDec(toks[2]);
         int count = constrain(toks[3].toInt(), 1, 32);
-
-        // Write register pointer (no STOP: use endTransmission(false))
-        Wire.beginTransmission((uint8_t)addr);
-        Wire.write((uint8_t)reg);
-        uint8_t err = Wire.endTransmission(false);  // repeated start
-        if (err != 0 && err != 4) {
-            // err==4 on some platforms means "other error" but data was sent
-            char e[16]; snprintf(e, sizeof(e), "NACK:%d", err);
-            sendErr(seq, String(e));
-            return;
+        w->beginTransmission((uint8_t)addr);
+        w->write((uint8_t)reg);
+        uint8_t err = w->endTransmission(false);
+        if (err && err != 4) {
+            char e[12]; snprintf(e, sizeof(e), "NACK:%d", err);
+            sendErr(seq, String(e)); return;
         }
-
-        uint8_t received = Wire.requestFrom((uint8_t)addr, (uint8_t)count);
-        if (received == 0) { sendErr(seq, "I2C:NO_DATA"); return; }
-
-        uint8_t buf[32];
-        int idx = 0;
-        while (Wire.available() && idx < 32) buf[idx++] = Wire.read();
+        uint8_t got = w->requestFrom((uint8_t)addr, (uint8_t)count);
+        if (!got) { sendErr(seq, "I2C:NO_DATA"); return; }
+        uint8_t buf[32]; int idx = 0;
+        while (w->available() && idx < 32) buf[idx++] = w->read();
         sendDone(seq, bytesToHex(buf, idx));
         return;
     }

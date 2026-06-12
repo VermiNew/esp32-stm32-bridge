@@ -21,6 +21,7 @@
 
 #include <Arduino.h>
 #include "protocol.h"
+#include "wifi_ntp.h"
 #include "parser.h"
 
 // ---------------------------------------------------------------------------
@@ -374,12 +375,13 @@ void printHelp() {
     Serial.println("  gpio toggle <pin>");
     Serial.println("  gpio port  A|B|C              read lower 8 pins of port");
     Serial.println();
-    Serial.println(CLR_AMBER "[ ADC ]" CLR_RESET);
-    Serial.println("  adc read  <pin>               12-bit raw (0-4095)");
-    Serial.println("  adc avg   <pin> <n>           average of n samples");
+    Serial.println(CLR_AMBER "[ ADC ]  12-bit, 0-4095" CLR_RESET);
+    Serial.println("  adc read  <pin>               single read");
+    Serial.println("  adc avg   <pin> <n>           averaged (max 64)");
     Serial.println("  adc mv    <pin>               read in millivolts");
-    Serial.println("  adc multi A0,A1,B0            read multiple pins at once");
-    Serial.println("  adc temp                      internal temperature (tenths °C)");
+    Serial.println("  adc multi A0,A1,B0            multiple pins → CSV");
+    Serial.println("  adc stream <pin> <n> <ms>     burst: n samples every ms → hex");
+    Serial.println("  adc temp                      internal temp (tenths °C)");
     Serial.println("  adc vref                      estimated VDDA in mV");
     Serial.println();
     Serial.println(CLR_AMBER "[ PWM ]" CLR_RESET);
@@ -388,14 +390,12 @@ void printHelp() {
     Serial.println("  pwm stop <pin>");
     Serial.println("  pwm read <pin>                last set duty");
     Serial.println();
-    Serial.println(CLR_AMBER "[ I2C ]  default: PB6=SCL, PB7=SDA" CLR_RESET);
-    Serial.println("  i2c scan");
-    Serial.println("  i2c ping  <addr>");
-    Serial.println("  i2c write <addr> <hexbytes>");
-    Serial.println("  i2c read  <addr> <n_bytes>");
-    Serial.println("  i2c wreg  <addr> <reg> <hexbytes>");
-    Serial.println("  i2c rreg  <addr> <reg> <n_bytes>");
-    Serial.println("  (addr/reg: decimal or 0x-hex, e.g. 104 or 0x68)");
+    Serial.println(CLR_AMBER "[ I2C1 ]  PB6=SCL, PB7=SDA" CLR_RESET);
+    Serial.println("  i2c cfg 100|400               set bus speed (kHz)");
+    Serial.println("  i2c scan|ping|write|read|wreg|rreg ...");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ I2C2 ]  PB10=SCL, PB11=SDA  ⚠ shared with U3" CLR_RESET);
+    Serial.println("  i2c2 cfg|scan|ping|write|read|wreg|rreg  (same syntax as i2c)");
     Serial.println();
     Serial.println(CLR_AMBER "[ SPI ]  default: PA5=SCK, PA6=MISO, PA7=MOSI" CLR_RESET);
     Serial.println("  spi begin <cs_pin> <mode 0-3> <freq_khz>");
@@ -405,10 +405,12 @@ void printHelp() {
     Serial.println("  spi end");
     Serial.println();
     Serial.println(CLR_AMBER "[ USART2 ]  PA2=TX2, PA3=RX2" CLR_RESET);
-    Serial.println("  u2 cfg <baud> [bits parity stop]");
-    Serial.println("  u2 tx <hexbytes>");
-    Serial.println("  u2 rx <n_bytes> [timeout_ms]");
-    Serial.println("  u2 flush | u2 status | u2 close");
+    Serial.println("  u2 cfg|tx|rx|flush|status|close  (see help for detail)");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ USART3 ]  PB10=TX3, PB11=RX3  ⚠ shared with I2C2" CLR_RESET);
+    Serial.println("  u3 cfg <baud> [bits parity stop]");
+    Serial.println("  u3 tx <hexbytes> | u3 rx <n> [timeout_ms]");
+    Serial.println("  u3 flush | u3 status | u3 close");
     Serial.println();
     Serial.println(CLR_AMBER "[ EEPROM  flash emulation, 512 bytes ]" CLR_RESET);
     Serial.println("  ee write  <addr> <byte 0-255>");
@@ -434,7 +436,24 @@ void printHelp() {
     Serial.println("  sys wdog kick                    manually kick watchdog");
     Serial.println("  sys wdog dis");
     Serial.println();
-    Serial.println(CLR_AMBER "[ Compute offload ]" CLR_RESET);
+    Serial.println(CLR_AMBER "[ CAN bus ]  PB8=RX, PB9=TX  (needs TJA1050 transceiver)" CLR_RESET);
+    Serial.println("  can begin 125|250|500|1000    init (kbps)");
+    Serial.println("  can tx  <id_dec> <hexbytes>   send standard frame (11-bit ID)");
+    Serial.println("  can txe <id_dec> <hexbytes>   send extended frame (29-bit ID)");
+    Serial.println("  can rx                         receive next frame → ID:HEX:EXT:RTR");
+    Serial.println("  can filter <id> <mask>         set acceptance filter");
+    Serial.println("  can filter off                 accept all");
+    Serial.println("  can status                     error counters");
+    Serial.println("  can end");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ WiFi ]" CLR_RESET);
+    Serial.println("  wifi connect <ssid> <password>");
+    Serial.println("  wifi status | wifi disconnect | wifi scan");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ NTP → RTC sync ]" CLR_RESET);
+    Serial.println("  ntp sync                  query NTP + push UTC time to slave RTC");
+    Serial.println("  ntp status                last sync time + elapsed");
+    Serial.println("  ntp server <hostname>     change NTP server (default: pool.ntp.org)");
     Serial.println("  calc map <v> <in_min> <in_max> <out_min> <out_max>");
     Serial.println("  calc crc16 <hexbytes>");
     Serial.println("  calc sqrt <n> | calc constrain <v> <lo> <hi> | calc abs <v>");
@@ -537,4 +556,6 @@ void loop() {
     stateTick();
     heartbeatTick();
     wdogForwardTick();
+    ntpTick();
+    wifiAutoReconnect();
 }
