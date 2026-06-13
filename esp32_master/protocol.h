@@ -145,3 +145,8 @@ static inline String seqStr(int n) {
 static inline int seqNext(int seq) {
     return (seq >= 999) ? 1 : seq + 1;
 }
+
+// ---------------------------------------------------------------------------
+// Master state machine states (shared between esp32_master.ino and wifi_ntp.h)
+// ---------------------------------------------------------------------------
+enum class State { IDLE, WAIT_RECV, WAIT_DONE, POLLING };

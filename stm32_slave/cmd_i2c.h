@@ -26,6 +26,10 @@
 void sendDone(const String& seq, const String& result);
 void sendErr (const String& seq, const String& reason);
 
+// Wire2 is not pre-declared for BLUEPILL_F103C8 variant — create it here.
+// PB10 = SDA, PB11 = SCL for I2C2 on Blue Pill.
+static TwoWire Wire2(PB11, PB10);
+
 static bool i2cInitialized  = false;
 static bool i2c2Initialized = false;
 
@@ -38,14 +42,14 @@ static void ensureI2CBus(int bus) {
         if (!i2c2Initialized) {
             Wire2.begin();
             Wire2.setClock(100000);
-            Wire2.setWireTimeout(25000, true);
+            Wire2.setTimeout(25000);
             i2c2Initialized = true;
         }
     } else {
         if (!i2cInitialized) {
             Wire.begin();
             Wire.setClock(100000);
-            Wire.setWireTimeout(25000, true);
+            Wire.setTimeout(25000);
             i2cInitialized = true;
         }
     }

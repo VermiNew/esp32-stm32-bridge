@@ -180,7 +180,7 @@ static void ntpStatus() {
 // NTP state machine tick — called from loop() after startCommand returns
 // Must be called ONLY when the protocol state machine is IDLE.
 // ---------------------------------------------------------------------------
-// extern declaration — state is in esp32_master.ino
+// state is defined in esp32_master.ino; visible here via translation-unit linking.
 extern State state;
 
 static void ntpTick() {

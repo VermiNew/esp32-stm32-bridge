@@ -20,6 +20,7 @@
  */
 
 #include <Arduino.h>
+#include "colors.h"
 #include "protocol.h"
 #include "wifi_ntp.h"
 #include "parser.h"
@@ -52,8 +53,7 @@ bool   apiLastWasErr = false;  // true if last completed with ERR
 // ---------------------------------------------------------------------------
 // State machine
 // ---------------------------------------------------------------------------
-enum class State { IDLE, WAIT_RECV, WAIT_DONE, POLLING };
-static State state         = State::IDLE;
+State state                = State::IDLE;
 static int   currentSeq    = 1;
 static String pendingData  = "";   // DATA string of in-flight SEND
 static unsigned long stateTs   = 0;
@@ -91,13 +91,6 @@ static void ansi(const char* code) { Serial.print("\033["); Serial.print(code); 
 static void clr()  { Serial.print("\033[0m"); }
 static void bold() { Serial.print("\033[1m"); }
 
-#define CLR_GREEN  "\033[38;2;80;220;100m"
-#define CLR_RED    "\033[38;2;255;80;80m"
-#define CLR_AMBER  "\033[38;2;255;200;60m"
-#define CLR_BLUE   "\033[38;2;130;200;255m"
-#define CLR_DIM    "\033[38;2;120;120;120m"
-#define CLR_RESET  "\033[0m"
-
 void logOk  (const String& m) { Serial.print(CLR_GREEN "[OK]"  CLR_RESET "  "); Serial.println(m); }
 void logErr (const String& m) { Serial.print(CLR_RED   "[ERR]" CLR_RESET " "); Serial.println(m); }
 void logWarn(const String& m) { Serial.print(CLR_AMBER "[!!]"  CLR_RESET "  "); Serial.println(m); }
@@ -123,7 +116,7 @@ static void sendCommand(const String& data) {
 // ---------------------------------------------------------------------------
 // Start a new command transaction
 // ---------------------------------------------------------------------------
-static void startCommand(const String& cmd) {
+void startCommand(const String& cmd) {
     if (state != State::IDLE) {
         logErr("Still busy with previous command. Type 'reset' first.");
         return;

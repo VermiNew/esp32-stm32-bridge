@@ -185,6 +185,10 @@ static String parseHumanCmd(const String& raw) {
         if (ntok < 2) { logErr("Usage: i2c scan|ping|write|read|wreg|rreg ..."); return ""; }
         String t1 = tok[1]; t1.toLowerCase();
 
+        if (t1 == "cfg") {
+            if (ntok < 3) { logErr("Usage: i2c cfg 100|400"); return ""; }
+            return "I2C:CFG:" + tok[2];
+        }
         if (t1 == "scan") return "I2C:SCAN";
         if (t1 == "ping") {
             if (ntok < 3) { logErr("Usage: i2c ping <addr>"); return ""; }
@@ -355,7 +359,7 @@ static String parseHumanCmd(const String& raw) {
         String t1 = tok[1]; t1.toLowerCase();
 
         if (t1 == "map") {
-            if (ntok < 8) { logErr("Usage: calc map <v> <in_min> <in_max> <out_min> <out_max>"); return ""; }
+            if (ntok < 7) { logErr("Usage: calc map <v> <in_min> <in_max> <out_min> <out_max>"); return ""; }
             return "CALC:MAP:" + tok[2] + ":" + tok[3] + ":" + tok[4] + ":" + tok[5] + ":" + tok[6];
         }
         if (t1 == "crc16") {

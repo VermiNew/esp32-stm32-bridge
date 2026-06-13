@@ -115,9 +115,8 @@ static void handleAdc(const String& seq, const String& args) {
 #ifdef ATEMP
         int raw = analogRead(ATEMP);
 #else
-        // Read channel 16 directly (ADC1 IN16 is the temperature sensor)
-        // This may not work on all STM32duino versions without ATEMP defined.
-        int raw = analogRead(A0);  // fallback: read A0 and note calibration needed
+        sendErr(seq, "ADC:TEMP_UNAVAIL");
+        return;
 #endif
         // V_SENSE = raw * VDDA / 4095  (in mV)
         float vsense = (float)raw * ADC_VDDA_MV / 4095.0f;

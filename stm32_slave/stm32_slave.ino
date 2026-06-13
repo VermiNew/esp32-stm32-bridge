@@ -37,6 +37,9 @@
 #include <Arduino.h>
 #include <IWatchdog.h>
 
+HardwareSerial Serial2(PA3, PA2);
+HardwareSerial Serial3(PB11, PB10);
+
 #include "protocol.h"
 #include "cmd_gpio.h"
 #include "cmd_adc.h"
@@ -200,7 +203,7 @@ void setup() {
 
     Wire.begin();
     Wire.setClock(100000);
-    Wire.setWireTimeout(25000, true);
+    Wire.setTimeout(25000);
     i2cInitialized = true;
 
     irqInit();
