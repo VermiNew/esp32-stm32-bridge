@@ -44,6 +44,12 @@ static const int           MAX_RETRY             = 3;
 static const int           MAX_POLLS             = 15;
 
 // ---------------------------------------------------------------------------
+// API result — written by handleSlaveReply(), read by stm32_api.h execute()
+// ---------------------------------------------------------------------------
+String apiLastResult = "";   // last DONE payload
+bool   apiLastWasErr = false;  // true if last completed with ERR
+
+// ---------------------------------------------------------------------------
 // State machine
 // ---------------------------------------------------------------------------
 enum class State { IDLE, WAIT_RECV, WAIT_DONE, POLLING };
@@ -227,16 +233,14 @@ static void handleSlaveReply(const String& raw) {
     if (type == "DONE" && seq == seqStr(currentSeq)) {
         if (state == State::WAIT_DONE || state == State::POLLING) {
             if (!verifyCrc(crcF, payload)) {
-                logErr("CRC mismatch on DONE! Payload may be corrupted.");
-                // Still accept it but warn
+                logWarn("CRC mismatch on DONE! Payload may be corrupted.");
             }
-            // Send FREE to release the slot on the slave
             stmSend("FREE:" + seq);
             logOk(payload.length() ? payload : "(empty)");
+            apiLastResult = payload;
+            apiLastWasErr = false;
             currentSeq = seqNext(currentSeq);
             state = State::IDLE;
-
-            // Update link health
             hbMissCount = 0;
             linkState   = LinkState::CONNECTED;
         }
@@ -244,13 +248,15 @@ static void handleSlaveReply(const String& raw) {
     }
 
     // ---- BUSY ----
-    if (type == "BUSY") return;  // handled by polling tick
+    if (type == "BUSY") return;
 
     // ---- ERR ----
     if (type == "ERR" && seq == seqStr(currentSeq)) {
         if (!verifyCrc(crcF, payload)) logWarn("CRC mismatch on ERR frame.");
         logErr("Slave: " + payload);
         stmSend("FREE:" + seq);
+        apiLastResult = payload;
+        apiLastWasErr = true;
         currentSeq = seqNext(currentSeq);
         state = State::IDLE;
         return;
