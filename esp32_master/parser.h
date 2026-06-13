@@ -15,9 +15,30 @@
  * All tokens are case-insensitive on input; protocol strings are uppercase.
  */
 
-// Forward declarations
+// Forward declarations (defined in esp32_master.ino)
 void printHelp();
-void logErr(const String& msg);
+void logOk  (const String& msg);
+void logErr (const String& msg);
+void logWarn(const String& msg);
+void logInfo(const String& msg);
+
+// Forward declarations (defined in wifi_ntp.h — included before parser.h)
+void wifiConnect(const String& ssid, const String& password);
+void wifiStatus();
+void wifiScan();
+void ntpSync();
+void ntpStatus();
+extern String ntpServer;
+extern String storedSsid;
+extern String storedPass;
+
+// ---------------------------------------------------------------------------
+// Parser-local state
+// ---------------------------------------------------------------------------
+
+// When true, suppress the "transceiver required" warning for CAN normal mode.
+// Set via: can nowarn   |   cleared via: can warn
+static bool canNoWarn = false;
 
 // Normalise a pin token to uppercase (e.g. "a0" -> "A0")
 static inline String normPin(const String& s) {
@@ -412,13 +433,49 @@ static String parseHumanCmd(const String& raw) {
 
     // ------------------------------------------------------------------ can
     if (t0 == "can") {
-        if (ntok < 2) { logErr("Usage: can begin|tx|txe|rx|filter|status|end ..."); return ""; }
+        if (ntok < 2) { logErr("Usage: can begin|tx|txe|rx|filter|status|end|nowarn|warn ..."); return ""; }
         String t1 = tok[1]; t1.toLowerCase();
+
+        // ---- nowarn / warn ----
+        if (t1 == "nowarn") {
+            canNoWarn = true;
+            logOk("CAN transceiver warning suppressed locally.");
+            return "CAN:NOWARN";   // also suppress on slave side
+        }
+        if (t1 == "warn") {
+            canNoWarn = false;
+            logOk("CAN transceiver warning restored.");
+            return "CAN:WARN";     // also restore on slave side
+        }
 
         if (t1 == "begin") {
             if (ntok < 3) { logErr("Usage: can begin 125|250|500|1000 [loopback|silent|normal]"); return ""; }
             String mode = (ntok >= 4) ? tok[3] : "normal";
             mode.toUpperCase();
+
+            // Show transceiver warning for normal mode (unless suppressed)
+            if (mode == "NORMAL" && !canNoWarn) {
+                Serial.println();
+                Serial.println(CLR_AMBER "  ╔══════════════════════════════════════════════════════════╗" CLR_RESET);
+                Serial.println(CLR_AMBER "  ║  ⚠  CAN NORMAL MODE — TRANSCEIVER REQUIRED             ║" CLR_RESET);
+                Serial.println(CLR_AMBER "  ╠══════════════════════════════════════════════════════════╣" CLR_RESET);
+                Serial.println(CLR_AMBER "  ║  PB8 (RX) and PB9 (TX) must be connected to a CAN      ║" CLR_RESET);
+                Serial.println(CLR_AMBER "  ║  transceiver, e.g.:                                     ║" CLR_RESET);
+                Serial.println(CLR_AMBER "  ║    TJA1050  — 5V supply, 3.3V signal tolerant           ║" CLR_RESET);
+                Serial.println(CLR_AMBER "  ║    SN65HVD230 — 3.3V native (recommended for Blue Pill) ║" CLR_RESET);
+                Serial.println(CLR_AMBER "  ║                                                          ║" CLR_RESET);
+                Serial.println(CLR_AMBER "  ║  Without a transceiver the STM32 will go BUS-OFF        ║" CLR_RESET);
+                Serial.println(CLR_AMBER "  ║  immediately and no frames will be sent or received.    ║" CLR_RESET);
+                Serial.println(CLR_AMBER "  ║                                                          ║" CLR_RESET);
+                Serial.println(CLR_AMBER "  ║  No transceiver?  Use loopback mode instead:            ║" CLR_RESET);
+                Serial.println(CLR_AMBER "  ║    can begin " + tok[2] + " loopback                             ║" CLR_RESET);
+                Serial.println(CLR_AMBER "  ║                                                          ║" CLR_RESET);
+                Serial.println(CLR_AMBER "  ║  To suppress this warning permanently:                  ║" CLR_RESET);
+                Serial.println(CLR_AMBER "  ║    can nowarn                                            ║" CLR_RESET);
+                Serial.println(CLR_AMBER "  ╚══════════════════════════════════════════════════════════╝" CLR_RESET);
+                Serial.println();
+            }
+
             return "CAN:BEGIN:" + tok[2] + ":" + mode;
         }
         if (t1 == "tx" || t1 == "txe") {
@@ -436,7 +493,7 @@ static String parseHumanCmd(const String& raw) {
             if (ntok < 4) { logErr("Usage: can filter <id> <mask>"); return ""; }
             return "CAN:FILTER:" + tok[2] + ":" + tok[3];
         }
-        logErr("can sub: begin|tx|txe|rx|filter|status|end");
+        logErr("can sub: begin|tx|txe|rx|filter|status|end|nowarn|warn");
         return "";
     }
 

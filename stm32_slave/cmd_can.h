@@ -48,7 +48,8 @@ void sendErr (const String& seq, const String& reason);
 // ---------------------------------------------------------------------------
 
 static CAN_HandleTypeDef hcan1;
-static bool canActive = false;
+static bool canActive       = false;
+static bool canSuppressWarn = false;   // set via CAN:NOWARN, cleared via CAN:WARN
 
 static const int CAN_RX_BUF = 16;
 struct CanFrame {
@@ -186,6 +187,18 @@ static void handleCan(const String& seq, const String& args) {
 
     const String& sub = toks[0];
 
+    // ----- NOWARN / WARN (suppress / restore transceiver advisory) -----
+    if (sub == "NOWARN") {
+        canSuppressWarn = true;
+        sendDone(seq, "CAN:WARN_SUPPRESSED");
+        return;
+    }
+    if (sub == "WARN") {
+        canSuppressWarn = false;
+        sendDone(seq, "CAN:WARN_RESTORED");
+        return;
+    }
+
     // ----- BEGIN -----
     if (sub == "BEGIN") {
         if (n < 2) { sendErr(seq, "CAN:MISSING_SPEED"); return; }
@@ -205,7 +218,14 @@ static void handleCan(const String& seq, const String& args) {
         if (!ok) { sendErr(seq, "CAN:INIT_FAIL"); return; }
         canActive = true;
         canRxHead = canRxTail = 0;
-        sendDone(seq, "CAN:OK:" + String(spd) + "kbps:" + modeStr + ":PB8/PB9");
+
+        String result = "CAN:OK:" + String(spd) + "kbps:" + modeStr + ":PB8/PB9";
+        // Append a short advisory for normal mode — visible in any client,
+        // not just the Serial Monitor. Suppress with CAN:NOWARN on the slave.
+        if (hwMode == CAN_MODE_NORMAL && !canSuppressWarn) {
+            result += " [WARN:TRANSCEIVER_REQUIRED:TJA1050_or_SN65HVD230]";
+        }
+        sendDone(seq, result);
         return;
     }
 
