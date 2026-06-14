@@ -53,7 +53,7 @@
     FlashDetectTrouble1     = "Rozwiazywanie problemow:"
     FlashDetectTrouble2     = "  1. Zworka BOOT0 musi byc na pozycji 1."
     FlashDetectTrouble3     = "  2. Wcisnij RESET po tym, jak kreator otworzy port."
-    FlashDetectTrouble4     = "  3. ESP32 musi miec wgrany esp32_master (LED miga ~150 ms)."
+    FlashDetectTrouble4     = "  3. ESP32 musi miec wgrany esp32_flasher (LED miga ~150 ms)."
     FlashDetectTrouble5     = "  4. Okablowanie: GPIO17->PA10, GPIO16<-PA9, 3.3V, GND."
     FlashDetectForcePrompt  = "Sprobowac wgrac mimo to? [t/N]:"
     FlashWriteTitle         = "--- Krok 3: Wgrywanie firmware ---"

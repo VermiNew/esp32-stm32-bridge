@@ -53,7 +53,7 @@
     FlashDetectTrouble1     = "Troubleshooting:"
     FlashDetectTrouble2     = "  1. BOOT0 jumper must be on position 1."
     FlashDetectTrouble3     = "  2. Press RESET after the wizard opens the port."
-    FlashDetectTrouble4     = "  3. ESP32 must be running esp32_master (LED ~150 ms blink)."
+    FlashDetectTrouble4     = "  3. ESP32 must be running esp32_flasher (LED ~150 ms blink)."
     FlashDetectTrouble5     = "  4. Wiring: GPIO17->PA10, GPIO16<-PA9, 3.3V, GND."
     FlashDetectForcePrompt  = "Try flashing anyway? [y/N]:"
     FlashWriteTitle         = "--- Step 3: Flashing firmware ---"
