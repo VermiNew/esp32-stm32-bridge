@@ -74,30 +74,45 @@ Write-Info "  5. Guide you through setting BOOT0 = 0 to run the app"
 Write-Host ""
 
 # ---------------------------------------------------------------------------
-# Locate required files
+# Locate required files and tools
 # ---------------------------------------------------------------------------
 
 $ScriptDir  = $PSScriptRoot
+$ToolsDir   = Join-Path $ScriptDir "tools"
 $BinPath    = Join-Path $ScriptDir "stm32_slave\stm32_slave.ino.bin"
-$FlashExe   = Join-Path $ScriptDir "stm32flash.exe"
-if (-not (Test-Path $FlashExe)) {
-    # Fall back to PATH
-    $FlashExe = "stm32flash.exe"
-}
+$FlashExe   = Join-Path $ToolsDir "stm32flash.exe"
 
-$flashOnPath = $null -ne (Get-Command $FlashExe -ErrorAction SilentlyContinue)
-if (-not (Test-Path (Join-Path $ScriptDir "stm32flash.exe")) -and -not $flashOnPath) {
-    Write-Err "stm32flash.exe not found."
-    Write-Info "Download it from: https://sourceforge.net/projects/stm32flash/"
-    Write-Info "Place stm32flash.exe next to this script."
+# --- arduino-cli check ---
+if (-not (Get-Command "arduino-cli" -ErrorAction SilentlyContinue)) {
+    Write-Err "arduino-cli not found on PATH."
+    Write-Info "Install it from: https://arduino.github.io/arduino-cli/latest/installation/"
+    Write-Info "Recommended: winget install ArduinoSA.ArduinoCLI"
     exit 1
+}
+Write-Ok "arduino-cli found: $((Get-Command arduino-cli).Source)"
+
+# --- stm32flash.exe check — auto-download if missing ---
+if (-not (Test-Path $FlashExe)) {
+    Write-Warn "stm32flash.exe not found in tools\ — downloading automatically..."
+    $getter = Join-Path $ScriptDir "get_stm32flash.ps1"
+    if (-not (Test-Path $getter)) {
+        Write-Err "get_stm32flash.ps1 not found next to this script."
+        Write-Info "Download stm32flash manually and place it in: $ToolsDir"
+        exit 1
+    }
+    & $getter
+    if (-not (Test-Path $FlashExe)) {
+        Write-Err "Download failed — stm32flash.exe still missing."
+        exit 1
+    }
 }
 Write-Ok "Found stm32flash: $FlashExe"
 
+# --- firmware binary check ---
 if (-not (Test-Path $BinPath)) {
     Write-Err "Firmware binary not found at: $BinPath"
-    Write-Info "Compile stm32_slave in Arduino IDE first, then locate the .bin"
-    Write-Info "in your Arduino build output and copy it to that path."
+    Write-Info "Compile stm32_slave in Arduino IDE first, then copy the .bin here:"
+    Write-Info "  $BinPath"
     exit 1
 }
 Write-Ok "Found firmware: $BinPath"

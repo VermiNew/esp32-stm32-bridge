@@ -39,10 +39,13 @@ $VERSION     = "0.7"
 $ZIP_NAME    = "stm32flash-${VERSION}-binaries.zip"
 $ZIP_URL     = "https://sourceforge.net/projects/stm32flash/files/${ZIP_NAME}/download"
 $MD5_URL     = "https://sourceforge.net/projects/stm32flash/files/MD5SUMS/download"
-$DEST_EXE    = Join-Path $PSScriptRoot "stm32flash.exe"
+$TOOLS_DIR   = Join-Path $PSScriptRoot "tools"
+$DEST_EXE    = Join-Path $TOOLS_DIR "stm32flash.exe"
 $TEMP_DIR    = Join-Path $env:TEMP "stm32flash_download_$$"
 $TEMP_ZIP    = Join-Path $TEMP_DIR $ZIP_NAME
 $TEMP_MD5    = Join-Path $TEMP_DIR "MD5SUMS"
+
+New-Item -ItemType Directory -Path $TOOLS_DIR -Force | Out-Null
 
 Write-Host ""
 Write-Info "stm32flash $VERSION downloader"
