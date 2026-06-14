@@ -41,6 +41,12 @@ jobs:
             --fqbn esp32:esp32:esp32 \
             esp32_master
 
+      - name: Build ESP32 flasher
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32 \
+            esp32_flasher
+
       - name: Build STM32 slave
         run: |
           arduino-cli compile \

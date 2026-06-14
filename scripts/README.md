@@ -8,12 +8,14 @@ All scripts require **PowerShell 7+** and import `Shared.psm1` for shared helper
 | Script | Description |
 |--------|-------------|
 | `flash.ps1` | Interactive wizard — detects COM port, verifies bootloader, flashes STM32 |
-| `test.ps1` | Smoke-test harness — connects to ESP32, runs full command suite, reports PASS/FAIL |
-| `get-stm32flash.ps1` | Downloads `stm32flash.exe` from SourceForge, verifies MD5, extracts to `tools\` |
+| `test.ps1` | Smoke-test harness (PowerShell) — connects to ESP32, runs full command suite, reports PASS/FAIL |
+| `test.py` | Smoke-test harness (Python) — same tests, requires `pip install pyserial` |
+| `get-stm32flash.ps1` | Downloads `stm32flash.exe` from SourceForge, verifies MD5, extracts to `tools\` (Windows) |
+| `get-stm32flash.sh` | Downloads `stm32flash` binary (Linux/macOS) |
 | `get-stm32rtc.ps1` | Downloads and installs the STM32RTC Arduino library via arduino-cli |
 | `flash_stm32.bat` | Minimal Windows CMD wrapper around stm32flash (no wizard, no auto-detect) |
 | `flash_stm32.sh` | Minimal Linux/macOS wrapper around stm32flash |
-| `Shared.psm1` | Shared module — ANSI colors, COM port detection, prerequisite checks |
+| `Shared.psm1` | Shared module — ANSI colors, i18n, COM port detection, prerequisite checks |
 
 ## Quick start
 

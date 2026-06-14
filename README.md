@@ -12,7 +12,7 @@ jako **uniwersalny agent sprzętowy** przez bezpośredni link UART.
 | ESP32 DevKit v1 | Standardowy layout 38-pin |
 | STM32F103C8T6 "Blue Pill" | Klon jest OK |
 | 4× przewody Dupont (F-F) | |
-| `stm32flash` | Windows: `get_stm32flash.ps1`; Linux/macOS: `get_stm32flash.sh` |
+| `stm32flash` | Windows: `get-stm32flash.ps1`; Linux/macOS: `get-stm32flash.sh` |
 
 ---
 
@@ -70,12 +70,12 @@ na płytce (to GPIO1/GPIO3, reserved dla konsoli USB).
 
 **Windows:**
 ```powershell
-.\get_stm32flash.ps1
+.\scripts\get-stm32flash.ps1
 ```
 
 **Linux/macOS:**
 ```bash
-chmod +x get_stm32flash.sh && ./get_stm32flash.sh
+chmod +x scripts/get-stm32flash.sh && ./scripts/get-stm32flash.sh
 ```
 
 Skrypt pobiera zip z SourceForge, weryfikuje MD5 z oficjalnego `MD5SUMS`,
@@ -100,17 +100,17 @@ Najpierw skompiluj i wyeksportuj binarny plik w Arduino IDE:
 
 **Windows (wizard z detekcją bootloadera):**
 ```powershell
-.\flash_script.ps1
+.\scripts\flash.ps1
 ```
 
-**Windows (szybki):**
+**Windows (szybki, bez wizarda):**
 ```cmd
-flash_stm32.bat
+scripts\flash_stm32.bat
 ```
 
 **Linux/macOS:**
 ```bash
-./flash_stm32.sh /dev/ttyUSB0
+./scripts/flash_stm32.sh /dev/ttyUSB0
 ```
 
 **Ręcznie:**
