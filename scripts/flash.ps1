@@ -1,25 +1,29 @@
-#Requires -Version 7.0
+﻿#Requires -Version 7.0
 <#
 .SYNOPSIS
-    Interactive flashing wizard — flashes stm32_slave firmware onto the STM32
-    Blue Pill using the ESP32 as a USB-to-UART bridge (esp32_flasher firmware).
+    Interactive flashing wizard for the STM32 Blue Pill via ESP32 UART bridge.
+
+.PARAMETER Lang
+    Language: "pl" or "en" (default: auto-detect from system locale).
 
 .NOTES
-    - Requires arduino-cli on PATH.
-    - stm32flash.exe is auto-downloaded to tools\ if missing.
-    - PowerShell 7+ required.
+    Requires: arduino-cli on PATH, stm32flash.exe in tools\ (auto-downloaded),
+              stm32_slave\stm32_slave.ino.bin (compiled in Arduino IDE).
+    ESP32 must be running esp32_flasher firmware (LED blinks ~150 ms).
 #>
+
+param([string]$Lang = "")
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-Import-Module (Join-Path $PSScriptRoot "Shared.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "Shared.psm1") -Force -ArgumentList $Lang
 
-$Root      = Split-Path $PSScriptRoot
-$ToolsDir  = Join-Path $Root "tools"
-$FlashExe  = Join-Path $ToolsDir "stm32flash.exe"
-$BinPath   = Join-Path $Root "stm32_slave\stm32_slave.ino.bin"
-$Getter    = Join-Path $PSScriptRoot "get-stm32flash.ps1"
+$Root     = Split-Path $PSScriptRoot
+$ToolsDir = Join-Path $Root "tools"
+$FlashExe = Join-Path $ToolsDir "stm32flash.exe"
+$BinPath  = Join-Path $Root "stm32_slave\stm32_slave.ino.bin"
+$Getter   = Join-Path $PSScriptRoot "get-stm32flash.ps1"
 
 # ---------------------------------------------------------------------------
 # Banner
@@ -27,15 +31,14 @@ $Getter    = Join-Path $PSScriptRoot "get-stm32flash.ps1"
 
 Write-Host ""
 Write-Title "==========================================================="
-Write-Title "  Supermikrokontroler — STM32 Blue Pill Flash Wizard"
+Write-Title $L.FlashBannerTitle
 Write-Title "==========================================================="
 Write-Host ""
-Write-Info "This wizard will:"
-Write-Info "  1. Detect the ESP32 COM port"
-Write-Info "  2. Guide you through setting BOOT0 = 1 on the STM32"
-Write-Info "  3. Verify the STM32 bootloader is responding"
-Write-Info "  4. Flash stm32_slave firmware using stm32flash"
-Write-Info "  5. Guide you through setting BOOT0 = 0 to run the app"
+Write-Info $L.FlashBannerStep1
+Write-Info $L.FlashBannerStep2
+Write-Info $L.FlashBannerStep3
+Write-Info $L.FlashBannerStep4
+Write-Info $L.FlashBannerStep5
 Write-Host ""
 
 # ---------------------------------------------------------------------------
@@ -53,10 +56,7 @@ Write-Host ""
 
 Add-Type -AssemblyName System.IO.Ports
 $espPort = Select-EspPort
-if ([string]::IsNullOrWhiteSpace($espPort)) {
-    Write-Err "No COM port specified. Exiting."
-    exit 1
-}
+if ([string]::IsNullOrWhiteSpace($espPort)) { Write-Err $L.PortNone; exit 1 }
 $espPort = $espPort.Trim().ToUpper()
 Write-Host ""
 
@@ -64,17 +64,17 @@ Write-Host ""
 # Optional loopback test
 # ---------------------------------------------------------------------------
 
-$doLoopback = Prompt-User "Run loopback test? (GPIO16 and GPIO17 must be shorted) [y/N]:"
-if ($doLoopback -match '^[yY]') {
-    Write-Info "Opening $espPort for loopback test..."
-    Write-Warn "Opening the port triggers DTR/RTS — disabling to prevent ESP32 reset."
+$doLoopback = Prompt-User $L.FlashLoopbackPrompt
+if ($doLoopback -match '^[ytYT]') {
+    Write-Info ($L.FlashLoopbackOpening -f $espPort)
+    Write-Warn $L.FlashLoopbackDtrWarn
     try {
         $port = New-Object System.IO.Ports.SerialPort($espPort, 115200,
             [System.IO.Ports.Parity]::Even, 8, [System.IO.Ports.StopBits]::One)
         $port.DtrEnable = $false; $port.RtsEnable = $false
         $port.ReadTimeout = 500; $port.WriteTimeout = 500
         $port.Open()
-        Write-Info "Waiting 3 s for ESP32 to boot..."
+        Write-Info $L.FlashLoopbackWaiting
         Start-Sleep -Seconds 3
 
         $pass = $true
@@ -84,24 +84,24 @@ if ($doLoopback -match '^[yY]') {
             if ($port.BytesToRead -gt 0) {
                 $echo = $port.ReadByte()
                 if ($echo -ne $b) {
-                    Write-Err ("Loopback mismatch: sent 0x{0:X2}, got 0x{1:X2}" -f $b, $echo)
+                    Write-Err ($L.FlashLoopbackMismatch -f $b, $echo)
                     $pass = $false; break
                 }
             } else {
-                Write-Err ("Loopback: no echo for byte 0x{0:X2}" -f $b)
+                Write-Err ($L.FlashLoopbackNoEcho -f $b)
                 $pass = $false; break
             }
         }
         $port.Close()
 
         if ($pass) {
-            Write-Ok "Loopback passed — UART wiring confirmed."
+            Write-Ok $L.FlashLoopbackPassed
         } else {
-            $cont = Prompt-User "Loopback failed. Continue anyway? [y/N]:"
-            if ($cont -notmatch '^[yY]') { exit 1 }
+            $cont = Prompt-User $L.FlashLoopbackFailPrompt
+            if ($cont -notmatch '^[ytYT]') { exit 1 }
         }
     } catch {
-        Write-Warn "Loopback error: $_ — continuing."
+        Write-Warn ($L.FlashLoopbackError -f $_)
     }
 }
 Write-Host ""
@@ -110,22 +110,22 @@ Write-Host ""
 # Step 1: BOOT0 = 1
 # ---------------------------------------------------------------------------
 
-Write-Title "--- Step 1: Set BOOT0 = 1 (bootloader mode) ---"
-Write-Info "On the STM32 Blue Pill:"
-Write-Info "  - Move the BOOT0 jumper from 0 to 1."
-Write-Info "  - Press RESET on the Blue Pill."
+Write-Title $L.FlashBoot0Title
+Write-Info  $L.FlashBoot0Line1
+Write-Info  $L.FlashBoot0Line2
+Write-Info  $L.FlashBoot0Line3
 Write-Host ""
-Write-Warn "After BOOT0=1 + RESET the onboard LED (PC13) should NOT blink."
+Write-Warn  $L.FlashBoot0Warn
 Write-Host ""
-$null = Prompt-User "Press ENTER when BOOT0=1 and the Blue Pill has been reset..."
+$null = Prompt-User $L.FlashBoot0Prompt
 Write-Host ""
 
 # ---------------------------------------------------------------------------
 # Step 2: Bootloader detection
 # ---------------------------------------------------------------------------
 
-Write-Title "--- Step 2: Bootloader detection ---"
-Write-Info "Probing STM32 ROM bootloader on $espPort (8E1, DTR/RTS disabled)..."
+Write-Title $L.FlashDetectTitle
+Write-Info ($L.FlashDetectProbing -f $espPort)
 
 $detected = $false
 for ($attempt = 1; $attempt -le 5; $attempt++) {
@@ -136,40 +136,39 @@ for ($attempt = 1; $attempt -le 5; $attempt++) {
         $port.ReadTimeout = 1000; $port.WriteTimeout = 500
         $port.Open()
 
-        Write-Info "Attempt $attempt / 5 — sending autobaud 0x7F..."
+        Write-Info ($L.FlashDetectAttempt -f $attempt)
         $port.Write([byte[]](0x7F), 0, 1)
         Start-Sleep -Milliseconds 300
 
         if ($port.BytesToRead -gt 0) {
             $ack = $port.ReadByte()
             if ($ack -eq 0x79) {
-                Write-Ok "Bootloader ACK (0x79) — STM32 is in bootloader mode!"
-                $detected = $true
+                Write-Ok $L.FlashDetectAck; $detected = $true
             } elseif ($ack -eq 0x00) {
-                Write-Warn "Got 0x00 — RX line held LOW. Check BOOT0 and wiring."
+                Write-Warn $L.FlashDetectLow
             } else {
-                Write-Warn ("Unexpected byte: 0x{0:X2}" -f $ack)
+                Write-Warn ($L.FlashDetectUnexpected -f $ack)
             }
         } else {
-            Write-Warn "No response — press RESET on Blue Pill now, then wait for retry..."
+            Write-Warn $L.FlashDetectNoResp
         }
         $port.Close()
         if ($detected) { break }
-        if ($attempt -lt 5) { Write-Info "Retrying in 2 s..."; Start-Sleep -Seconds 2 }
+        if ($attempt -lt 5) { Write-Info $L.FlashDetectRetry; Start-Sleep -Seconds 2 }
     } catch {
-        Write-Err "Serial error: $_"; break
+        Write-Err ($L.FlashDetectSerialErr -f $_); break
     }
 }
 
 if (-not $detected) {
-    Write-Err "Bootloader not detected after 5 attempts."
-    Write-Info "Troubleshooting:"
-    Write-Info "  1. BOOT0 jumper must be on position 1."
-    Write-Info "  2. Press RESET after the wizard opens the port."
-    Write-Info "  3. ESP32 must be running esp32_flasher (LED ~150 ms blink)."
-    Write-Info "  4. Wiring: GPIO17->PA10, GPIO16<-PA9, 3.3V, GND."
-    $cont = Prompt-User "Try flashing anyway? [y/N]:"
-    if ($cont -notmatch '^[yY]') { exit 1 }
+    Write-Err  $L.FlashDetectFailed
+    Write-Info $L.FlashDetectTrouble1
+    Write-Info $L.FlashDetectTrouble2
+    Write-Info $L.FlashDetectTrouble3
+    Write-Info $L.FlashDetectTrouble4
+    Write-Info $L.FlashDetectTrouble5
+    $cont = Prompt-User $L.FlashDetectForcePrompt
+    if ($cont -notmatch '^[ytYT]') { exit 1 }
 }
 Write-Host ""
 
@@ -177,9 +176,9 @@ Write-Host ""
 # Step 3: Flash
 # ---------------------------------------------------------------------------
 
-Write-Title "--- Step 3: Flashing firmware ---"
-Write-Info "Binary : $BinPath"
-Write-Info "Port   : $espPort"
+Write-Title $L.FlashWriteTitle
+Write-Info ($L.FlashWriteBin  -f $BinPath)
+Write-Info ($L.FlashWritePort -f $espPort)
 Write-Host ""
 
 $flashArgs = @("-b", "115200", "-w", "`"$BinPath`"", "-v", $espPort)
@@ -189,15 +188,14 @@ Write-Host ""
 try {
     $proc = Start-Process -FilePath $FlashExe -ArgumentList $flashArgs -NoNewWindow -Wait -PassThru
     if ($proc.ExitCode -eq 0) {
-        Write-Ok "stm32flash completed successfully."
+        Write-Ok $L.FlashWriteOk
     } else {
-        Write-Err "stm32flash exited with code $($proc.ExitCode)."
-        Write-Warn "If 'Failed to init device': hold RESET, rerun, release ~3 s after port opens."
+        Write-Err  ($L.FlashWriteFail -f $proc.ExitCode)
+        Write-Warn $L.FlashWriteHint
         exit 1
     }
 } catch {
-    Write-Err "Could not run stm32flash: $_"
-    exit 1
+    Write-Err ($L.FlashWriteErr -f $_); exit 1
 }
 Write-Host ""
 
@@ -205,19 +203,21 @@ Write-Host ""
 # Step 4: BOOT0 = 0
 # ---------------------------------------------------------------------------
 
-Write-Title "--- Step 4: Set BOOT0 = 0 (run application) ---"
-Write-Info "Move the BOOT0 jumper back to 0, then press RESET."
-Write-Info "The onboard LED (PC13) should blink 3 times on boot."
+Write-Title $L.FlashBoot0BackTitle
+Write-Info  $L.FlashBoot0BackLine1
+Write-Info  $L.FlashBoot0BackLine2
 Write-Host ""
-$null = Prompt-User "Press ENTER when done..."
+$null = Prompt-User $L.FlashBoot0BackPrompt
 Write-Host ""
 
-Write-Ok "All done!"
-Write-Info "Flash esp32_master onto the ESP32 via Arduino IDE."
-Write-Info "Open Serial Monitor at 115200 baud, line ending = Newline."
-Write-Info "Type 'ping' — you should see PONG and [OK]."
+Write-Ok   $L.FlashDone1
+Write-Info $L.FlashDone2
+Write-Info $L.FlashDone3
+Write-Info $L.FlashDone4
 Write-Host ""
 Write-Title "==========================================================="
-Write-Title "  Happy hacking!  -- Supermikrokontroler"
+Write-Title $L.FlashDoneTitle
 Write-Title "==========================================================="
 Write-Host ""
+
+

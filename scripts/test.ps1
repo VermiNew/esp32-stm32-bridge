@@ -1,8 +1,7 @@
-#Requires -Version 7.0
+﻿#Requires -Version 7.0
 <#
 .SYNOPSIS
     Smoke-test harness for Supermikrokontroler v2.
-    Connects to the ESP32 master, sends test commands, verifies responses.
 
 .PARAMETER Port
     COM port (e.g. COM3). Auto-detected if omitted.
@@ -13,36 +12,37 @@
 .PARAMETER Timeout
     Per-command timeout in seconds (default 6).
 
+.PARAMETER Lang
+    Language: "pl" or "en" (default: auto-detect).
+
 .EXAMPLE
     .\test.ps1 -Port COM3
-    .\test.ps1
+    .\test.ps1 -Lang pl
+
+.NOTES
+    Connects to the ESP32 master over UART, sends the full command suite
+    and reports PASS/FAIL per test. Exit code 0 = all passed, 1 = failures.
+    RTC tests are soft-fail (skipped if no LSE crystal present).
 #>
 
 param(
     [string]$Port    = "",
     [int]   $Baud    = 115200,
-    [int]   $Timeout = 6
+    [int]   $Timeout = 6,
+    [string]$Lang    = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-Import-Module (Join-Path $PSScriptRoot "Shared.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "Shared.psm1") -Force -ArgumentList $Lang
 Add-Type -AssemblyName System.IO.Ports
 
-# ---------------------------------------------------------------------------
-# Port
-# ---------------------------------------------------------------------------
-
 if ($Port -eq "") { $Port = Select-EspPort }
-if ([string]::IsNullOrWhiteSpace($Port)) { Write-Err "No COM port."; exit 1 }
+if ([string]::IsNullOrWhiteSpace($Port)) { Write-Err $L.TestNoPort; exit 1 }
 $Port = $Port.Trim().ToUpper()
 
-# ---------------------------------------------------------------------------
-# Open port
-# ---------------------------------------------------------------------------
-
-Write-Info "Opening $Port at $Baud baud..."
+Write-Info ($L.TestOpening -f $Port, $Baud)
 $sp = New-Object System.IO.Ports.SerialPort($Port, $Baud,
     [System.IO.Ports.Parity]::None, 8, [System.IO.Ports.StopBits]::One)
 $sp.DtrEnable = $false; $sp.RtsEnable = $false
@@ -51,10 +51,6 @@ $sp.NewLine = "`n"
 $sp.Open()
 Start-Sleep -Seconds 3
 $sp.DiscardInBuffer(); $sp.DiscardOutBuffer()
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 $passCount = 0
 $failCount = 0
@@ -83,26 +79,18 @@ function RunTest([string]$desc, [string]$cmd, [string]$pattern) {
         Write-Ok  "[$desc]  $result"
         $script:passCount++
     } else {
-        Write-Err "[$desc]  expected: $pattern  (timeout)"
+        Write-Err "[$desc]  $($L.TestTimeout -f $pattern)"
         $script:failCount++
     }
 }
 
-# ---------------------------------------------------------------------------
-# Banner
-# ---------------------------------------------------------------------------
-
 Write-Host ""
 Write-Title "=================================================="
-Write-Title "  Supermikrokontroler v2 — Smoke Test Harness"
+Write-Title $L.TestBannerTitle
 Write-Title "=================================================="
 Write-Host ""
-Write-Info "Port: $Port  Baud: $Baud  Timeout: ${Timeout}s"
+Write-Info ($L.TestPortInfo -f $Port, $Baud, $Timeout)
 Write-Host ""
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 RunTest "PING"            "ping"                   '\[OK\].*PONG'
 RunTest "SYS:STATUS"      "sys status"             '\[OK\].*v2\.0'
@@ -155,60 +143,51 @@ RunTest "CALC:CONSTRAIN"  "calc constrain 200 0 100"  '\[OK\]\s+100'
 RunTest "CALC:ABS"        "calc abs -42"              '\[OK\]\s+42'
 RunTest "CALC:CRC16"      "calc crc16 48656C6C6F"     '\[OK\]\s+[0-9A-F]{4}'
 
-# CAN loopback
-Write-Info "CAN loopback test (no transceiver required):"
+Write-Info $L.TestCanLoopback
 $sp.WriteLine("can begin 250 loopback")
 $r = WaitForLine '\[OK\]|\[ERR\]' 4
 if ($r -match '\[OK\]') {
-    $passCount++; Write-Ok "[CAN:BEGIN:LOOPBACK] ready"
-    RunTest "CAN:TX"    "can tx 123 DEADBEEF" '\[OK\].*TX'
-    RunTest "CAN:RX"    "can rx"              '\[OK\].*123.*DEAD'
-    RunTest "CAN:STATUS" "can status"         '\[OK\].*STATE'
-    RunTest "CAN:END"   "can end"             '\[OK\].*OFF'
-} else {
-    Write-Warn "[CAN] init failed — skipping"
-}
+    $passCount++; Write-Ok $L.TestCanReady
+    RunTest "CAN:TX"     "can tx 123 DEADBEEF" '\[OK\].*TX'
+    RunTest "CAN:RX"     "can rx"              '\[OK\].*123.*DEAD'
+    RunTest "CAN:STATUS" "can status"          '\[OK\].*STATE'
+    RunTest "CAN:END"    "can end"             '\[OK\].*OFF'
+} else { Write-Warn $L.TestCanSkip }
 
-# RTC (soft-fail if no crystal)
-Write-Info "RTC tests (require LSE crystal):"
+Write-Info $L.TestRtcInfo
 $sp.WriteLine("rtc init")
 $r = WaitForLine '\[OK\]|\[ERR\]' 5
 if ($r -match '\[OK\]') {
-    $passCount++; Write-Ok "[RTC:INIT] crystal detected"
+    $passCount++; Write-Ok $L.TestRtcCrystal
     RunTest "RTC:SET"   "rtc set 2025-01-15 12:00:00" '\[OK\].*SET'
     RunTest "RTC:GET"   "rtc get"                      '\[OK\].*2025.*12:00'
     RunTest "RTC:GETTS" "rtc getts"                    '\[OK\]\s+\d{8,10}'
     RunTest "RTC:EPOCH" "rtc epoch"                    '\[OK\]\s+\d{10}'
-} else {
-    Write-Warn "[RTC] no crystal — skipping"
-}
+} else { Write-Warn $L.TestRtcSkip }
 
-# Stress: 5 rapid pings
-Write-Info "Stress: 5 rapid PINGs..."
+Write-Info $L.TestStress
 for ($i = 1; $i -le 5; $i++) {
     $sp.WriteLine("ping")
     if (WaitForLine '\[OK\].*PONG' 2) { $passCount++ }
-    else { $failCount++; Write-Err "[PING #$i] no response" }
+    else { $failCount++; Write-Err ($L.TestPingFail -f $i) }
 }
 
 RunTest "PROTOCOL:RESET"  "reset" 'RESET:ACK|\[OK\]'
 Start-Sleep -Milliseconds 500
 RunTest "POST-RESET PING" "ping"  '\[OK\].*PONG'
 
-# ---------------------------------------------------------------------------
-# Summary
-# ---------------------------------------------------------------------------
-
 $sp.Close()
 Write-Host ""
 Write-Title "=================================================="
 $total = $passCount + $failCount
 if ($failCount -eq 0) {
-    Write-Ok  "Results: $passCount / $total passed"
+    Write-Ok  ($L.TestResultsPass -f $passCount, $total)
 } else {
-    Write-Err "Results: $passCount / $total passed  ($failCount failed)"
+    Write-Err ($L.TestResultsFail -f $passCount, $total, $failCount)
 }
 Write-Title "=================================================="
 Write-Host ""
 
 if ($failCount -gt 0) { exit 1 } else { exit 0 }
+
+

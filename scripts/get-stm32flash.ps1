@@ -1,13 +1,23 @@
-#Requires -Version 7.0
+﻿#Requires -Version 7.0
 <#
 .SYNOPSIS
     Downloads stm32flash 0.7 from SourceForge, verifies MD5, extracts to tools\.
+
+.PARAMETER Lang
+    Language: "pl" or "en" (default: auto-detect).
+
+.NOTES
+    Downloads stm32flash-0.7-binaries.zip from SourceForge, verifies MD5,
+    extracts win64 (or win32) stm32flash.exe into tools\ next to scripts\.
+    Requires internet access and PowerShell 7+.
 #>
+
+param([string]$Lang = "")
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-Import-Module (Join-Path $PSScriptRoot "Shared.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "Shared.psm1") -Force -ArgumentList $Lang
 
 $VERSION  = "0.7"
 $ZIP_NAME = "stm32flash-${VERSION}-binaries.zip"
@@ -23,17 +33,17 @@ New-Item -ItemType Directory -Path $TOOLS    -Force | Out-Null
 New-Item -ItemType Directory -Path $TEMP_DIR -Force | Out-Null
 
 Write-Host ""
-Write-Info "stm32flash $VERSION downloader"
-Write-Info "Destination: $DEST_EXE"
+Write-Info ($L.GetFlashTitle -f $VERSION)
+Write-Info ($L.GetFlashDest  -f $DEST_EXE)
 Write-Host ""
 
 if (Test-Path $DEST_EXE) {
-    $ans = Prompt-User "stm32flash.exe already exists. Overwrite? [y/N]:"
-    if ($ans -notmatch '^[yY]') { Write-Info "Aborted."; exit 0 }
+    $ans = Prompt-User $L.GetFlashExistsPrompt
+    if ($ans -notmatch '^[ytYT]') { Write-Info $L.GetFlashAborted; exit 0 }
 }
 
 try {
-    Write-Info "Downloading MD5SUMS..."
+    Write-Info $L.GetFlashDlMd5
     Invoke-WebRequest -Uri $MD5_URL -OutFile $TEMP_MD5 -UseBasicParsing -MaximumRedirection 5 -TimeoutSec 30
 
     $expectedMd5 = $null
@@ -42,25 +52,21 @@ try {
             $expectedMd5 = $Matches[1].ToLower(); break
         }
     }
-    if (-not $expectedMd5) {
-        Write-Err "MD5 entry for $ZIP_NAME not found in MD5SUMS."; exit 1
-    }
-    Write-Ok "Expected MD5: $expectedMd5"
+    if (-not $expectedMd5) { Write-Err ($L.GetFlashMd5Missing -f $ZIP_NAME); exit 1 }
+    Write-Ok ($L.GetFlashMd5Expected -f $expectedMd5)
 
-    Write-Info "Downloading $ZIP_NAME..."
+    Write-Info ($L.GetFlashDlZip -f $ZIP_NAME)
     $ProgressPreference = 'SilentlyContinue'
     Invoke-WebRequest -Uri $ZIP_URL -OutFile $TEMP_ZIP -UseBasicParsing -MaximumRedirection 10 -TimeoutSec 120
     $ProgressPreference = 'Continue'
-    Write-Ok ("Downloaded: {0:N0} bytes" -f (Get-Item $TEMP_ZIP).Length)
+    Write-Ok ($L.GetFlashDlBytes -f (Get-Item $TEMP_ZIP).Length)
 
-    Write-Info "Verifying MD5..."
+    Write-Info $L.GetFlashVerifying
     $actualMd5 = (Get-FileHash $TEMP_ZIP -Algorithm MD5).Hash.ToLower()
-    if ($actualMd5 -ne $expectedMd5) {
-        Write-Err "MD5 MISMATCH — aborting."; exit 1
-    }
-    Write-Ok "Checksum OK."
+    if ($actualMd5 -ne $expectedMd5) { Write-Err $L.GetFlashMd5Mismatch; exit 1 }
+    Write-Ok $L.GetFlashMd5Ok
 
-    Write-Info "Extracting stm32flash.exe..."
+    Write-Info $L.GetFlashExtracting
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [System.IO.Compression.ZipFile]::OpenRead($TEMP_ZIP)
     try {
@@ -68,7 +74,7 @@ try {
         $chosen  = $entries | Where-Object { $_.FullName -match 'win64' } | Select-Object -First 1
         if (-not $chosen) { $chosen = $entries | Where-Object { $_.FullName -match 'win32' } | Select-Object -First 1 }
         if (-not $chosen) { $chosen = $entries | Select-Object -First 1 }
-        if (-not $chosen) { Write-Err "stm32flash.exe not found in archive."; exit 1 }
+        if (-not $chosen) { Write-Err $L.GetFlashNotInZip; exit 1 }
 
         $s = $chosen.Open()
         $o = [System.IO.File]::Create($DEST_EXE)
@@ -77,14 +83,16 @@ try {
 
     $bytes = [System.IO.File]::ReadAllBytes($DEST_EXE)
     if ($bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) {
-        Write-Ok ("Extracted: {0:N0} bytes (valid MZ header)" -f (Get-Item $DEST_EXE).Length)
+        Write-Ok ($L.GetFlashExtracted -f (Get-Item $DEST_EXE).Length)
     } else {
-        Write-Warn "Unexpected file header — exe may not run."
+        Write-Warn $L.GetFlashBadHeader
     }
 } finally {
     if (Test-Path $TEMP_DIR) { Remove-Item -Recurse -Force $TEMP_DIR }
 }
 
 Write-Host ""
-Write-Ok "stm32flash.exe ready at: $DEST_EXE"
+Write-Ok ($L.GetFlashReady -f $DEST_EXE)
 Write-Host ""
+
+
