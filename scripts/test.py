@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-test_harness.py — Smoke-test harness for Supermikrokontroler v2
+test.py — Smoke-test harness for Supermikrokontroler v2
 
 Connects to the ESP32 master over a serial port, sends a sequence of
 test commands and verifies responses against regex patterns.
 
 Usage:
-    python test_harness.py                   # auto-detect port
-    python test_harness.py COM3              # Windows
-    python test_harness.py /dev/ttyUSB0      # Linux
-    python test_harness.py /dev/cu.usbserial-0001  # macOS
+    python test.py                        # auto-detect port
+    python test.py COM3                   # Windows
+    python test.py /dev/ttyUSB0           # Linux
+    python test.py /dev/cu.usbserial-0001 # macOS
 
 Requirements:
     pip install pyserial
@@ -260,4 +260,8 @@ def main():
     sys.exit(0 if fail_count == 0 else 1)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print(f"\n{A}[ABORTED]{RST} Test interrupted by user.")
+        sys.exit(1)

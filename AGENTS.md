@@ -27,11 +27,20 @@ supermikrokontroler/
 │   ├── cmd_irq.h               IRQ: ATTACH/DETACH/POLL/LIST (8 slotów)
 │   ├── cmd_sys.h               SYS: STATUS/UPTIME/CHIPID/RESET/WDOG/...
 │   └── cmd_misc.h              CALC (MAP/CRC16/SQRT/...) + legacy LED/BLINK
-├── flash_script.ps1            PowerShell 7 wizard flashowania (Windows)
-├── flash_stm32.bat             prosty wrapper bat (Windows)
-├── flash_stm32.sh              wrapper bash (Linux/macOS)
-├── get_stm32flash.ps1          pobieranie + weryfikacja MD5 stm32flash (Windows)
-└── get_stm32flash.sh           pobieranie + weryfikacja MD5 stm32flash (Linux/macOS)
+├── scripts/
+│   ├── Shared.psm1             wspólny moduł pwsh7 (kolory, i18n, detekcja portu)
+│   ├── flash.ps1               PowerShell 7 wizard flashowania (Windows)
+│   ├── test.ps1                smoke-test harness (PowerShell 7)
+│   ├── test.py                 smoke-test harness (Python, wymaga pyserial)
+│   ├── get-stm32flash.ps1      pobieranie + weryfikacja MD5 stm32flash (Windows)
+│   ├── get-stm32flash.sh       pobieranie + weryfikacja MD5 stm32flash (Linux/macOS)
+│   ├── get-stm32rtc.ps1        instalacja biblioteki STM32RTC via arduino-cli
+│   ├── flash_stm32.bat         minimalny wrapper bat bez wizarda (Windows)
+│   ├── flash_stm32.sh          minimalny wrapper bash (Linux/macOS)
+│   └── lang/                   pliki i18n pl.psd1 / en.psd1
+├── docs/
+│   └── example_api_usage.ino   przykłady użycia C++ API (nie standalone sketch)
+└── .github/workflows/build.yml CI: kompilacja ESP32 master/flasher + STM32 slave
 ```
 
 ---
