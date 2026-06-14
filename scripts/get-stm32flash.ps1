@@ -1,15 +1,19 @@
 ﻿#Requires -Version 7.0
 <#
 .SYNOPSIS
-    Downloads stm32flash 0.7 from SourceForge, verifies MD5, extracts to tools\.
+    Downloads stm32flash 0.7 (SourceForge), verifies MD5, extracts stm32flash.exe to tools\.
 
 .PARAMETER Lang
     Language: "pl" or "en" (default: auto-detect).
 
+.EXAMPLE
+    .\get-stm32flash.ps1
+    .\get-stm32flash.ps1 -Lang en
+
 .NOTES
-    Downloads stm32flash-0.7-binaries.zip from SourceForge, verifies MD5,
-    extracts win64 (or win32) stm32flash.exe into tools\ next to scripts\.
-    Requires internet access and PowerShell 7+.
+    Downloads stm32flash-0.7-binaries.zip, verifies MD5 checksum, extracts the win64
+    (or win32 fallback) stm32flash.exe into tools\ next to scripts\.
+    Run once before first use of flash.ps1. Requires internet access.
 #>
 
 param([string]$Lang = "")

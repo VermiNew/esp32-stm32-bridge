@@ -1,11 +1,20 @@
 ﻿#Requires -Version 7.0
 <#
 .SYNOPSIS
-    Shared helpers for Supermikrokontroler scripts.
-    Import with: Import-Module (Join-Path $PSScriptRoot "Shared.psm1") -Force [-ArgumentList "pl"|"en"]
+    Shared helpers for all Supermikrokontroler scripts (colors, i18n, COM detection, prereq checks).
 
 .PARAMETER Lang
     Language code: "pl" or "en". Defaults to auto-detect from $PSUICulture.
+
+.EXAMPLE
+    Import-Module (Join-Path $PSScriptRoot "Shared.psm1") -Force
+    Import-Module (Join-Path $PSScriptRoot "Shared.psm1") -Force -ArgumentList "pl"
+
+.NOTES
+    Exports ANSI color helpers (Write-Title/Ok/Warn/Err/Info/Dim, Prompt-User),
+    COM port detection (Find-EspPort, Select-EspPort),
+    and prerequisite checks (Assert-ArduinoCli, Assert-StmFlash, Assert-FirmwareBin).
+    Also exports $L (localization hashtable) as a global variable — loaded from lang\{Lang}.psd1.
 #>
 
 param([string]$Lang = "")

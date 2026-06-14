@@ -1,15 +1,19 @@
 ﻿#Requires -Version 7.0
 <#
 .SYNOPSIS
-    Interactive flashing wizard for the STM32 Blue Pill via ESP32 UART bridge.
+    Interactive wizard: detects COM port, probes STM32 bootloader, flashes stm32_slave firmware.
 
 .PARAMETER Lang
     Language: "pl" or "en" (default: auto-detect from system locale).
 
+.EXAMPLE
+    .\flash.ps1
+    .\flash.ps1 -Lang pl
+
 .NOTES
-    Requires: arduino-cli on PATH, stm32flash.exe in tools\ (auto-downloaded),
-              stm32_slave\stm32_slave.ino.bin (compiled in Arduino IDE).
-    ESP32 must be running esp32_flasher firmware (LED blinks ~150 ms).
+    Requires: stm32flash.exe in tools\ (auto-downloaded by get-stm32flash.ps1),
+              stm32_slave\stm32_slave.ino.bin (compile in Arduino IDE first).
+    ESP32 must be running esp32_master firmware. Set BOOT0=1 on Blue Pill before flashing.
 #>
 
 param([string]$Lang = "")

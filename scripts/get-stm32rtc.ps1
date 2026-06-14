@@ -1,15 +1,20 @@
 ﻿#Requires -Version 7.0
 <#
 .SYNOPSIS
-    Downloads the STM32RTC library from GitHub and installs it via arduino-cli.
+    Downloads STM32RTC from GitHub and installs it via arduino-cli (unsafe zip install).
 
 .PARAMETER Lang
     Language: "pl" or "en" (default: auto-detect).
 
+.EXAMPLE
+    .\get-stm32rtc.ps1
+    .\get-stm32rtc.ps1 -Lang pl
+
 .NOTES
-    Downloads STM32RTC from https://github.com/stm32duino/STM32RTC
-    and installs it via arduino-cli lib install --zip-path.
-    Requires arduino-cli on PATH and internet access.
+    Fetches the latest STM32RTC zip from https://github.com/stm32duino/STM32RTC and
+    installs it with: arduino-cli lib install --zip-path.
+    Requires arduino-cli on PATH, internet access, and unsafe library installs enabled
+    (arduino-cli config set library.enable_unsafe_install true).
 #>
 
 param([string]$Lang = "")
