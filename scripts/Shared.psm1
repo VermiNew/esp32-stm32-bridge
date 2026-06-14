@@ -20,13 +20,28 @@
 param([string]$Lang = "")
 
 # ---------------------------------------------------------------------------
-# Language loading
+# Language selection
 # ---------------------------------------------------------------------------
 
 $_langDir = Join-Path $PSScriptRoot "lang"
 
 if (-not $Lang) {
-    $Lang = if ($PSUICulture -match '^pl') { "pl" } else { "en" }
+    $detected = if ($PSUICulture -match '^pl') { "pl" } else { "en" }
+    $esc = [char]27
+    Write-Host ""
+    Write-Host "${esc}[38;2;130;200;255m  Select language / Wybierz język${esc}[0m"
+    Write-Host "${esc}[38;2;100;100;100m  ──────────────────────────────${esc}[0m"
+    Write-Host "  ${esc}[38;2;180;130;255m[1]${esc}[0m English"
+    Write-Host "  ${esc}[38;2;180;130;255m[2]${esc}[0m Polski"
+    Write-Host ""
+    Write-Host -NoNewline "  ${esc}[38;2;180;130;255m[?>]${esc}[0m  Choice / Wybór [default: $detected]: "
+    $choice = (Read-Host).Trim()
+    $Lang = switch ($choice) {
+        "1"  { "en" }
+        "2"  { "pl" }
+        default { $detected }
+    }
+    Write-Host ""
 }
 
 $_langFile = Join-Path $_langDir "${Lang}.psd1"
@@ -35,8 +50,10 @@ if (-not (Test-Path $_langFile)) {
     $_langFile = Join-Path $_langDir "en.psd1"
 }
 
-$script:L = Import-PowerShellDataFile $_langFile
-Set-Variable -Name L -Value $script:L -Scope Global
+$script:L    = Import-PowerShellDataFile $_langFile
+$script:Lang = $Lang
+Set-Variable -Name L    -Value $script:L    -Scope Global
+Set-Variable -Name Lang -Value $script:Lang -Scope Global
 
 # ---------------------------------------------------------------------------
 # ANSI 24-bit color helpers
@@ -119,7 +136,7 @@ function Assert-StmFlash([string]$exePath, [string]$getterScript) {
             Write-Info ($L.StmFlashGetterHint    -f (Split-Path $exePath))
             exit 1
         }
-        & $getterScript
+        & $getterScript -Lang $script:Lang
         if (-not (Test-Path $exePath)) {
             Write-Err $L.StmFlashDlFailed; exit 1
         }
@@ -137,5 +154,5 @@ function Assert-FirmwareBin([string]$binPath) {
     Write-Ok ($L.FirmwareFound -f $binPath)
 }
 
-Export-ModuleMember -Function * -Variable L
+Export-ModuleMember -Function * -Variable L, Lang
 
