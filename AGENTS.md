@@ -7,29 +7,34 @@ ESP32 master ↔ STM32 Blue Pill slave przez UART, protokół ASCII z CRC16.
 ## Struktura projektu
 
 ```
-supermikrokontroler/
+esp32-stm32-bridge/
 ├── esp32_flasher/
 │   └── esp32_flasher.ino       USB↔UART bridge (8E1) do flashowania STM32
 ├── esp32_master/
 │   ├── esp32_master.ino        główna pętla, state machine, heartbeat, wdog
+│   ├── protocol.h              CRC16, splitTokens, parsePin, hexUtils (kopia)
 │   ├── parser.h                parser komend CLI → protocol DATA string
-│   └── protocol.h              CRC16, splitTokens, parsePin, hexUtils (kopia)
+│   ├── wifi_ntp.h              WiFi connect/scan, NTP sync → RTC:SETTSS
+│   └── stm32_api.h             programistyczne C++ API (klasa STM32)
 ├── stm32_slave/
 │   ├── stm32_slave.ino         setup/loop, router ramek, sendDone/sendErr
 │   ├── protocol.h              CRC16, splitTokens, parsePin, hexUtils (oryginał)
 │   ├── cmd_gpio.h              GPIO: MODE/WRITE/READ/TOGGLE/PORT
-│   ├── cmd_adc.h               ADC: READ/AVG/MV/MULTI/TEMP/VREF
+│   ├── cmd_adc.h               ADC: READ/AVG/MV/MULTI/STREAM/TEMP/VREF
 │   ├── cmd_pwm.h               PWM: SET/FREQ/STOP/READ
-│   ├── cmd_i2c.h               I2C: SCAN/PING/WRITE/READ/WREG/RREG
+│   ├── cmd_i2c.h               I2C1+I2C2: SCAN/PING/WRITE/READ/WREG/RREG/CFG
 │   ├── cmd_spi.h               SPI: BEGIN/XFER/WRITE/READ/END
 │   ├── cmd_u2.h                USART2: CFG/TX/RX/FLUSH/STATUS/CLOSE
+│   ├── cmd_u3.h                USART3: CFG/TX/RX/FLUSH/STATUS/CLOSE
 │   ├── cmd_ee.h                EEPROM: WRITE/READ/WRWORD/RDWORD/WRHEX/RDHEX/FILL
 │   ├── cmd_irq.h               IRQ: ATTACH/DETACH/POLL/LIST (8 slotów)
-│   ├── cmd_sys.h               SYS: STATUS/UPTIME/CHIPID/RESET/WDOG/...
+│   ├── cmd_can.h               CAN: BEGIN/TX/TXE/RX/FILTER/STATUS/END + loopback
+│   ├── cmd_rtc.h               RTC: INIT/GET/SET/GETTS/SETTSS/EPOCH (LSE)
+│   ├── cmd_sys.h               SYS: STATUS/UPTIME/CHIPID/RESET/WDOG/FREERAM/ECHO
 │   └── cmd_misc.h              CALC (MAP/CRC16/SQRT/...) + legacy LED/BLINK
 ├── scripts/
 │   ├── Shared.psm1             wspólny moduł pwsh7 (kolory, i18n, detekcja portu)
-│   ├── flash.ps1               PowerShell 7 wizard flashowania (Windows)
+│   ├── flash.ps1               wizard flashowania STM32 przez ESP32 bridge (PS7)
 │   ├── test.ps1                smoke-test harness (PowerShell 7)
 │   ├── test.py                 smoke-test harness (Python, wymaga pyserial)
 │   ├── get-stm32flash.ps1      pobieranie + weryfikacja MD5 stm32flash (Windows)
@@ -40,7 +45,11 @@ supermikrokontroler/
 │   └── lang/                   pliki i18n pl.psd1 / en.psd1
 ├── docs/
 │   └── example_api_usage.ino   przykłady użycia C++ API (nie standalone sketch)
-└── .github/workflows/build.yml CI: kompilacja ESP32 master/flasher + STM32 slave
+├── .github/workflows/build.yml CI: kompilacja ESP32 master/flasher + STM32 slave
+├── README.md                   skrócony przewodnik startowy (English)
+├── DOCUMENTATION.md            pełna dokumentacja (English)
+├── INSTRUKCJA.md               pełna instrukcja (Polski)
+└── AGENTS.md                   przewodnik dla agentów AI / kontrybutorów ← ten plik
 ```
 
 ---
