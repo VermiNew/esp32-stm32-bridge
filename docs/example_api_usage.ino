@@ -172,21 +172,22 @@ void example_irq_counter(STM32& stm) {
     // Count rising edges on A0 (e.g. from a button or encoder)
     stm.irq.attach("A0", "RISE");
 
-    unsigned long t0 = millis();
+    unsigned long t0       = millis();
+    unsigned long lastPoll = 0;
     long totalPulses = 0;
 
     while (millis() - t0 < 5000) {  // count for 5 seconds
-        stm.pump();
+        stm.pump();  // keep UART + heartbeat running — never delay() here
 
-        String events = stm.irq.poll();  // "A0:N" or "NONE"
-        if (events != "NONE" && events.length() > 0) {
-            // Parse "A0:12"
-            int colon = events.indexOf(':');
-            if (colon >= 0) {
-                totalPulses += events.substring(colon + 1).toInt();
+        // Poll IRQ at most every 100 ms without blocking
+        if (millis() - lastPoll >= 100) {
+            lastPoll = millis();
+            String events = stm.irq.poll();  // "A0:N" or "NONE"
+            if (events != "NONE" && events.length() > 0) {
+                int colon = events.indexOf(':');
+                if (colon >= 0) totalPulses += events.substring(colon + 1).toInt();
             }
         }
-        delay(100);
     }
 
     stm.irq.detach("A0");
