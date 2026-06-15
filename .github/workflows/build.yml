@@ -52,3 +52,14 @@ jobs:
           arduino-cli compile \
             --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8 \
             stm32_slave
+
+      - name: Verify protocol.h sync
+        run: |
+          # esp32_master/protocol.h has 5 extra lines at the end (master-only State enum).
+          # Compare only the shared portion (all lines present in stm32_slave/protocol.h).
+          SLAVE_LINES=$(wc -l < stm32_slave/protocol.h)
+          if ! diff <(head -n "$SLAVE_LINES" esp32_master/protocol.h) stm32_slave/protocol.h; then
+            echo "ERROR: shared protocol.h content is out of sync!"
+            exit 1
+          fi
+          echo "protocol.h shared content is identical in both sketches."
