@@ -7,8 +7,79 @@ on:
     branches: [main]
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Lint Python and PowerShell scripts
+  # ---------------------------------------------------------------------------
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint Python scripts (ruff)
+        run: ruff check scripts/
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+
+      - name: Lint PowerShell scripts (PSScriptAnalyzer)
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem scripts/ -Filter *.ps1 -Recurse
+          $files += Get-ChildItem scripts/ -Filter *.psm1 -Recurse
+          $errors = @()
+          foreach ($f in $files) {
+            $results = Invoke-ScriptAnalyzer -Path $f.FullName -Severity Error,Warning
+            foreach ($r in $results) {
+              Write-Host "$($f.Name):$($r.Line)  [$($r.Severity)] $($r.RuleName) — $($r.Message)"
+              if ($r.Severity -eq 'Error') { $errors += $r }
+            }
+          }
+          if ($errors.Count -gt 0) {
+            Write-Error "$($errors.Count) PSScriptAnalyzer error(s) found."
+            exit 1
+          }
+
+  # ---------------------------------------------------------------------------
+  # Generate minified scripts and upload as artifact
+  # ---------------------------------------------------------------------------
+  minify:
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate minified scripts
+        run: python scripts/minify.py --outdir dist
+
+      - name: Upload minified scripts
+        uses: actions/upload-artifact@v4
+        with:
+          name: scripts-minified
+          path: dist/
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Compile all Arduino sketches and verify protocol.h sync
+  # ---------------------------------------------------------------------------
   build:
     runs-on: ubuntu-latest
+    needs: lint
 
     steps:
       - uses: actions/checkout@v4
@@ -56,8 +127,6 @@ jobs:
 
       - name: Verify protocol.h sync
         run: |
-          # esp32_master/protocol.h has 5 extra lines at the end (master-only State enum).
-          # Compare only the shared portion (all lines present in stm32_slave/protocol.h).
           SLAVE_LINES=$(wc -l < stm32_slave/protocol.h)
           if ! diff <(head -n "$SLAVE_LINES" esp32_master/protocol.h) stm32_slave/protocol.h; then
             echo "ERROR: shared protocol.h content is out of sync!"

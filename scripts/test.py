@@ -129,6 +129,7 @@ def run_test(m: Master, description: str, command: str,
 # Main
 # ---------------------------------------------------------------------------
 def main():
+    global pass_count, fail_count
     port = sys.argv[1] if len(sys.argv) > 1 else detect_port()
 
     print()
