@@ -779,8 +779,8 @@ public:
             while (state != State::IDLE && millis() - t0 < 500) {
                 _api_pump(); yield();
             }
-            if (!apiLastWasErr && apiLastResult == "") {
-                // PING succeeded (PONG was received — state went IDLE with no ERR)
+            if (!apiLastWasErr) {
+                // PING succeeded — PONG received, state is IDLE, no error
                 return true;
             }
             delay(500);

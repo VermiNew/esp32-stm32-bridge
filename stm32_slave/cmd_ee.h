@@ -72,7 +72,7 @@ static void handleEE(const String& seq, const String& args) {
     if (sub == "WRWORD") {
         if (n < 3) { sendErr(seq, "EE:MISSING_ARGS"); return; }
         int addr = toks[1].toInt();
-        if (addr < 0 || addr + 3 >= EE_SIZE) { sendErr(seq, "EE:ADDR_OOB"); return; }
+        if (addr < 0 || addr + 4 > EE_SIZE) { sendErr(seq, "EE:ADDR_OOB"); return; }
         uint32_t word = (uint32_t)strtoul(toks[2].c_str(), nullptr, 10);
         EEPROM.update(addr + 0, (uint8_t)(word & 0xFF));
         EEPROM.update(addr + 1, (uint8_t)((word >> 8) & 0xFF));
@@ -86,7 +86,7 @@ static void handleEE(const String& seq, const String& args) {
     if (sub == "RDWORD") {
         if (n < 2) { sendErr(seq, "EE:MISSING_ADDR"); return; }
         int addr = toks[1].toInt();
-        if (addr < 0 || addr + 3 >= EE_SIZE) { sendErr(seq, "EE:ADDR_OOB"); return; }
+        if (addr < 0 || addr + 4 > EE_SIZE) { sendErr(seq, "EE:ADDR_OOB"); return; }
         uint32_t word = (uint32_t)EEPROM.read(addr + 0)
                       | ((uint32_t)EEPROM.read(addr + 1) << 8)
                       | ((uint32_t)EEPROM.read(addr + 2) << 16)

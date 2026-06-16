@@ -641,9 +641,7 @@ void loop() {
                         logInfo("Watchdog forwarding armed at " + String(ms) + " ms period.");
                     }
                 }
-                if (low == "sys wdog dis" || low == "sys wdog kick") {
-                    if (low == "sys wdog dis") wdogArmed = false;
-                }
+                if (low == "sys wdog dis") wdogArmed = false;
             }
 
             String cmd = parseHumanCmd(input);

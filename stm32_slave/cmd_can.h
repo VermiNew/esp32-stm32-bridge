@@ -254,9 +254,8 @@ static void handleCan(const String& seq, const String& args) {
         hdr.DLC = (uint32_t)len;
 
         uint32_t txMailbox;
-        unsigned long t0 = millis();
-        while (HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0) {
-            if (millis() - t0 > 100) { sendErr(seq, "CAN:TX_FULL"); return; }
+        if (HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0) {
+            sendErr(seq, "CAN:TX_FULL"); return;
         }
         if (HAL_CAN_AddTxMessage(&hcan1, &hdr, data, &txMailbox) != HAL_OK) {
             sendErr(seq, "CAN:TX_FAIL"); return;
