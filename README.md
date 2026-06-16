@@ -1,5 +1,7 @@
 # esp32-stm32-bridge
 
+![Build](https://github.com/VermiNew/esp32-stm32-bridge/actions/workflows/build.yml/badge.svg)
+
 ESP32 DevKit as **protocol master** controls an STM32F103C8T6 "Blue Pill"
 as a **universal hardware agent** over a direct UART link with ASCII + CRC16 protocol.
 
