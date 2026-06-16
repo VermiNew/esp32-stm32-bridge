@@ -1,9 +1,9 @@
-# Supermikrokontroler v2
+# esp32-stm32-bridge
 
 ESP32 DevKit jako **master protokołu** steruje STM32F103C8T6 "Blue Pill"
 jako **universal hardware agent** przez bezpośredni link UART.
 
-> Pełna dokumentacja: **[INSTRUKCJA.md](INSTRUKCJA.md)** (Polski) · **[DOCUMENTATION.md](DOCUMENTATION.md)** (English)
+> Pełna dokumentacja: **[INSTRUKCJA.md](INSTRUKCJA.md)** · **[English](../README.md)**
 
 ---
 
