@@ -54,6 +54,9 @@ HardwareSerial Serial3(PB11, PB10);
 #include "cmd_rtc.h"
 #include "cmd_u3.h"
 #include "cmd_can.h"
+#include "cmd_dac.h"
+#include "cmd_buzzer.h"
+#include "cmd_debug.h"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -83,10 +86,12 @@ void sendRecv(const String& seq) {
 void sendDone(const String& seq, const String& result) {
     lastDoneSeq    = seq;
     lastDoneResult = result;
+    debugTxPulse();
     sendRaw("DONE:" + seq + ":" + proto_crc_str(result) + ":" + result);
 }
 
 void sendErr(const String& seq, const String& reason) {
+    debugTxPulse();
     sendRaw("ERR:" + seq + ":" + proto_crc_str(reason) + ":" + reason);
 }
 
@@ -128,6 +133,7 @@ static void dispatch(const String& type, const String& seq,
 
     sendRecv(seq);
     wdogAutoKick();
+    debugRxPulse();
 
     int colon  = data.indexOf(':');
     String cmd  = (colon >= 0) ? data.substring(0, colon) : data;
@@ -147,9 +153,12 @@ static void dispatch(const String& type, const String& seq,
     else if (cmd == "CALC")   handleCalc (seq, rest);
     else if (cmd == "RTC")    handleRtc  (seq, rest);
     else if (cmd == "CAN")    handleCan  (seq, rest);
-    else if (cmd == "LED")    handleLed  (seq, rest);
-    else if (cmd == "BLINK")  handleBlink(seq, rest);
-    else if (cmd == "STATUS") handleSys  (seq, String("STATUS"));
+    else if (cmd == "DAC")    handleDac   (seq, rest);
+    else if (cmd == "BUZZER") handleBuzzer(seq, rest);
+    else if (cmd == "DEBUG")  handleDebug (seq, rest);
+    else if (cmd == "LED")    handleLed   (seq, rest);
+    else if (cmd == "BLINK")  handleBlink (seq, rest);
+    else if (cmd == "STATUS") handleSys   (seq, String("STATUS"));
     else sendErr(seq, "UNKNOWN_CMD:" + cmd);
 }
 
@@ -233,4 +242,6 @@ void loop() {
         }
     }
     blinkTick();
+    buzzerTick();
+    debugTick();
 }

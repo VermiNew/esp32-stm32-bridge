@@ -611,6 +611,96 @@ static String parseHumanCmd(const String& raw) {
         return "";
     }
 
+    // ------------------------------------------------------------------ dac
+    if (t0 == "dac") {
+        if (ntok < 2) { logErr("Usage: dac set|mv|read|off ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+        if (t1 == "set") {
+            if (ntok < 4) { logErr("Usage: dac set 1|2 <0-4095>"); return ""; }
+            return "DAC:SET:" + tok[2] + ":" + tok[3];
+        }
+        if (t1 == "mv") {
+            if (ntok < 4) { logErr("Usage: dac mv 1|2 <0-3300>"); return ""; }
+            return "DAC:MV:" + tok[2] + ":" + tok[3];
+        }
+        if (t1 == "read") {
+            if (ntok < 3) { logErr("Usage: dac read 1|2"); return ""; }
+            return "DAC:READ:" + tok[2];
+        }
+        if (t1 == "off") {
+            if (ntok >= 3) return "DAC:OFF:" + tok[2];
+            return "DAC:OFF";
+        }
+        logErr("dac sub: set|mv|read|off");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ buzzer
+    if (t0 == "buzzer") {
+        if (ntok < 2) { logErr("Usage: buzzer tone|beep|stop|status ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+        if (t1 == "tone") {
+            if (ntok < 5) { logErr("Usage: buzzer tone <pin> <hz> <ms>"); return ""; }
+            return "BUZZER:TONE:" + normPin(tok[2]) + ":" + tok[3] + ":" + tok[4];
+        }
+        if (t1 == "beep") {
+            if (ntok < 3) { logErr("Usage: buzzer beep <pin>"); return ""; }
+            return "BUZZER:BEEP:" + normPin(tok[2]);
+        }
+        if (t1 == "stop") {
+            if (ntok < 3) { logErr("Usage: buzzer stop <pin>"); return ""; }
+            return "BUZZER:STOP:" + normPin(tok[2]);
+        }
+        if (t1 == "status") {
+            if (ntok < 3) { logErr("Usage: buzzer status <pin>"); return ""; }
+            return "BUZZER:STATUS:" + normPin(tok[2]);
+        }
+        logErr("buzzer sub: tone|beep|stop|status");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ debug (slave LEDs)
+    if (t0 == "debug") {
+        if (ntok < 2) { logErr("Usage: debug attach|detach|status ..."); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+        if (t1 == "attach") {
+            if (ntok < 4) { logErr("Usage: debug attach <rx_pin> <tx_pin>"); return ""; }
+            return "DEBUG:ATTACH:" + normPin(tok[2]) + ":" + normPin(tok[3]);
+        }
+        if (t1 == "detach") return "DEBUG:DETACH";
+        if (t1 == "status") return "DEBUG:STATUS";
+        logErr("debug sub: attach|detach|status");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ masterdbg (ESP32 LEDs)
+    if (t0 == "masterdbg") {
+        if (ntok < 2) { logErr("Usage: masterdbg attach <tx_gpio> <rx_gpio>  |  masterdbg detach"); return ""; }
+        String t1 = tok[1]; t1.toLowerCase();
+        if (t1 == "attach") {
+            if (ntok < 4) { logErr("Usage: masterdbg attach <tx_gpio> <rx_gpio>"); return ""; }
+            int txPin = tok[2].toInt();
+            int rxPin = tok[3].toInt();
+            masterDebugAttach(txPin, rxPin);
+            logOk("Master debug LEDs attached: TX=GPIO" + String(txPin) + " RX=GPIO" + String(rxPin));
+            return "";
+        }
+        if (t1 == "detach") {
+            masterDebugDetach();
+            logOk("Master debug LEDs detached.");
+            return "";
+        }
+        if (t1 == "status") {
+            if (masterDbgActive)
+                logOk("Master debug LEDs active: TX=GPIO" + String(masterDbgTxPin) + " RX=GPIO" + String(masterDbgRxPin));
+            else
+                logInfo("Master debug LEDs not attached.");
+            return "";
+        }
+        logErr("masterdbg sub: attach|detach|status");
+        return "";
+    }
+
     // ------------------------------------------------------------------ legacy
     if (t0 == "led") {
         if (ntok < 2) { logErr("Usage: led on|off|status"); return ""; }

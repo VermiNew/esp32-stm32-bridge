@@ -80,6 +80,57 @@ static unsigned long wdogPeriodMs  = 0;
 static unsigned long lastWdogKickMs = 0;
 
 // ---------------------------------------------------------------------------
+// Debug LEDs (ESP32 side activity indicators)
+// ---------------------------------------------------------------------------
+static int  masterDbgTxPin  = -1;   // blinks on every frame sent to slave
+static int  masterDbgRxPin  = -1;   // blinks on every frame received from slave
+static bool masterDbgActive = false;
+
+static unsigned long masterDbgTxOff = 0;
+static unsigned long masterDbgRxOff = 0;
+static const unsigned long MASTER_DBG_PULSE_MS = 20;
+
+static void masterDebugAttach(int txPin, int rxPin) {
+    masterDbgTxPin  = txPin;
+    masterDbgRxPin  = rxPin;
+    masterDbgActive = true;
+    pinMode(txPin, OUTPUT); digitalWrite(txPin, LOW);
+    pinMode(rxPin, OUTPUT); digitalWrite(rxPin, LOW);
+    // Flash both once to confirm
+    digitalWrite(txPin, HIGH); digitalWrite(rxPin, HIGH);
+    delay(80);
+    digitalWrite(txPin, LOW);  digitalWrite(rxPin, LOW);
+}
+
+static void masterDebugDetach() {
+    if (masterDbgActive) {
+        digitalWrite(masterDbgTxPin, LOW);
+        digitalWrite(masterDbgRxPin, LOW);
+    }
+    masterDbgActive = false;
+    masterDbgTxPin = masterDbgRxPin = -1;
+}
+
+static void masterDebugTick() {
+    if (!masterDbgActive) return;
+    unsigned long now = millis();
+    if (masterDbgTxOff && now >= masterDbgTxOff) { digitalWrite(masterDbgTxPin, LOW); masterDbgTxOff = 0; }
+    if (masterDbgRxOff && now >= masterDbgRxOff) { digitalWrite(masterDbgRxPin, LOW); masterDbgRxOff = 0; }
+}
+
+static inline void masterDbgPulseTx() {
+    if (!masterDbgActive) return;
+    digitalWrite(masterDbgTxPin, HIGH);
+    masterDbgTxOff = millis() + MASTER_DBG_PULSE_MS;
+}
+
+static inline void masterDbgPulseRx() {
+    if (!masterDbgActive) return;
+    digitalWrite(masterDbgRxPin, HIGH);
+    masterDbgRxOff = millis() + MASTER_DBG_PULSE_MS;
+}
+
+// ---------------------------------------------------------------------------
 // Buffers
 // ---------------------------------------------------------------------------
 static String stmRxBuf = "";
@@ -103,6 +154,7 @@ void logInfo(const String& m) { Serial.print(CLR_BLUE  "   "   CLR_RESET " "); S
 // ---------------------------------------------------------------------------
 static void stmSend(const String& frame) {
     logTx(frame);
+    masterDbgPulseTx();
     STM.println(frame);
 }
 
@@ -166,6 +218,7 @@ static void handleSlaveReply(const String& raw) {
     String line = raw; line.trim();
     if (!line.length()) return;
     logRx(line);
+    masterDbgPulseRx();
 
     // Parse: TYPE[:SEQ[:CRC[:DATA]]]
     String parts[4];
@@ -472,6 +525,26 @@ void printHelp() {
     Serial.println("  rtc settss <seconds>               set from epoch-2000 timestamp");
     Serial.println("  rtc epoch                          Unix timestamp (since 1970)");
     Serial.println();
+    Serial.println(CLR_AMBER "[ DAC ]  PA4=DAC1, PA5=DAC2  ⚠ shared with SPI1" CLR_RESET);
+    Serial.println("  dac set  1|2 <0-4095>        set raw 12-bit value");
+    Serial.println("  dac mv   1|2 <0-3300>         set in millivolts");
+    Serial.println("  dac read 1|2                  read last set value");
+    Serial.println("  dac off  [1|2]                disable channel(s)");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ Buzzer (passive) ]" CLR_RESET);
+    Serial.println("  buzzer tone   <pin> <hz> <ms>  play tone (ms=0 → continuous)");
+    Serial.println("  buzzer beep   <pin>             100 ms beep at 1 kHz");
+    Serial.println("  buzzer stop   <pin>");
+    Serial.println("  buzzer status <pin>");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ Debug LEDs — slave side ]" CLR_RESET);
+    Serial.println("  debug attach <rx_pin> <tx_pin>  attach activity LEDs on STM32");
+    Serial.println("  debug detach  |  debug status");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ Debug LEDs — master side (ESP32 GPIO) ]" CLR_RESET);
+    Serial.println("  masterdbg attach <tx_gpio> <rx_gpio>");
+    Serial.println("  masterdbg detach  |  masterdbg status");
+    Serial.println();
     Serial.println(CLR_AMBER "[ Legacy ]" CLR_RESET);
     Serial.println("  led on|off|status  |  blink <ms>  |  status");
     Serial.println();
@@ -562,4 +635,5 @@ void loop() {
     wdogForwardTick();
     ntpTick();
     wifiAutoReconnect();
+    masterDebugTick();
 }

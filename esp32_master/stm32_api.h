@@ -660,6 +660,87 @@ struct CALC_API {
     long   absVal(long v)                    { String r = _api_exec("CALC:ABS:" + String(v));                                        return apiLastWasErr ? STM32_ERR_INT : r.toInt(); }
 };
 
+// ---------------------------------------------------------------------------
+// DAC (PA4 = DAC1, PA5 = DAC2)
+// ---------------------------------------------------------------------------
+struct DAC_API {
+    /** Set raw 12-bit value (0–4095). ch = 1 or 2. */
+    bool set(int ch, uint16_t raw) {
+        _api_exec("DAC:SET:" + String(ch) + ":" + String(raw));
+        return !apiLastWasErr;
+    }
+
+    /** Set output in millivolts (0–3300). ch = 1 or 2. */
+    bool mv(int ch, int millivolts) {
+        _api_exec("DAC:MV:" + String(ch) + ":" + String(millivolts));
+        return !apiLastWasErr;
+    }
+
+    /** Read last set raw value. Returns STM32_ERR_INT on error. */
+    int read(int ch) {
+        String r = _api_exec("DAC:READ:" + String(ch));
+        return apiLastWasErr ? STM32_ERR_INT : r.toInt();
+    }
+
+    /** Disable one channel (1 or 2) or both (ch = 0). */
+    bool off(int ch = 0) {
+        _api_exec(ch ? "DAC:OFF:" + String(ch) : String("DAC:OFF"));
+        return !apiLastWasErr;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Buzzer (passive, PWM-driven)
+// ---------------------------------------------------------------------------
+struct BUZZER_API {
+    /** Play tone at hz for durationMs (0 = continuous). */
+    bool tone(const String& pin, uint32_t hz, uint32_t durationMs = 0) {
+        String p = pin; p.toUpperCase();
+        _api_exec("BUZZER:TONE:" + p + ":" + String(hz) + ":" + String(durationMs));
+        return !apiLastWasErr;
+    }
+
+    /** Short 100 ms beep at 1000 Hz. */
+    bool beep(const String& pin) {
+        String p = pin; p.toUpperCase();
+        _api_exec("BUZZER:BEEP:" + p);
+        return !apiLastWasErr;
+    }
+
+    /** Stop tone immediately. */
+    bool stop(const String& pin) {
+        String p = pin; p.toUpperCase();
+        _api_exec("BUZZER:STOP:" + p);
+        return !apiLastWasErr;
+    }
+
+    /** Returns true if tone is currently playing on pin. */
+    bool isPlaying(const String& pin) {
+        String p = pin; p.toUpperCase();
+        String r = _api_exec("BUZZER:STATUS:" + p);
+        return !apiLastWasErr && r.startsWith("PLAYING");
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Debug LEDs on slave (RX + TX activity indicators)
+// ---------------------------------------------------------------------------
+struct DEBUG_API {
+    /** Attach two LEDs: rxPin blinks on receive, txPin blinks on send. */
+    bool attach(const String& rxPin, const String& txPin) {
+        String rx = rxPin; rx.toUpperCase();
+        String tx = txPin; tx.toUpperCase();
+        _api_exec("DEBUG:ATTACH:" + rx + ":" + tx);
+        return !apiLastWasErr;
+    }
+
+    /** Detach debug LEDs, release pins. */
+    bool detach() { _api_exec("DEBUG:DETACH"); return !apiLastWasErr; }
+
+    /** Returns status string: "ATTACHED:RX=A0:TX=A1" or "DETACHED". */
+    String status() { return _api_exec("DEBUG:STATUS"); }
+};
+
 // ===========================================================================
 // Top-level STM32 class — compose all sub-interfaces
 // ===========================================================================
@@ -674,10 +755,13 @@ public:
     SPI_API   spi;
     UART_API  uart2 { "U2" };  // USART2: PA2/PA3
     UART_API  uart3 { "U3" };  // USART3: PB10/PB11
-    EE_API    ee;
-    IRQ_API   irq;
-    RTC_API   rtc;
-    CAN_API   can;
+    EE_API     ee;
+    IRQ_API    irq;
+    RTC_API    rtc;
+    CAN_API    can;
+    DAC_API    dac;
+    BUZZER_API buzzer;
+    DEBUG_API  debug;
     SYS_API   sys;
     CALC_API  calc;
 
