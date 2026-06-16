@@ -23,6 +23,7 @@
 #include "colors.h"
 #include "protocol.h"
 #include "wifi_ntp.h"
+#include "ports.h"
 #include "parser.h"
 
 // ---------------------------------------------------------------------------
@@ -129,6 +130,12 @@ static inline void masterDbgPulseRx() {
     digitalWrite(masterDbgRxPin, HIGH);
     masterDbgRxOff = millis() + MASTER_DBG_PULSE_MS;
 }
+
+// ---------------------------------------------------------------------------
+// show ports — flag set by parser when PORTS:* is sent to slave
+// ---------------------------------------------------------------------------
+bool portsPending         = false;
+bool portsPendingFreeOnly = false;
 
 // ---------------------------------------------------------------------------
 // Buffers
@@ -282,13 +289,20 @@ static void handleSlaveReply(const String& raw) {
                 logWarn("CRC mismatch on DONE! Payload may be corrupted.");
             }
             stmSend("FREE:" + seq);
-            logOk(payload.length() ? payload : "(empty)");
             apiLastResult = payload;
             apiLastWasErr = false;
             currentSeq = seqNext(currentSeq);
             state = State::IDLE;
             hbMissCount = 0;
             linkState   = LinkState::CONNECTED;
+
+            // Special rendering for PORTS result
+            if (portsPending) {
+                portsPending = false;
+                printSlavePorts(payload, portsPendingFreeOnly);
+            } else {
+                logOk(payload.length() ? payload : "(empty)");
+            }
         }
         return;
     }
@@ -419,6 +433,13 @@ void printHelp() {
     Serial.println("  ping                          test link (PING/PONG)");
     Serial.println("  reset                         resync protocol");
     Serial.println("  hb                            manual heartbeat test");
+    Serial.println();
+    Serial.println(CLR_AMBER "[ Pin map ]" CLR_RESET);
+    Serial.println("  show ports                    all pins, both MCUs");
+    Serial.println("  show ports free               only free pins");
+    Serial.println("  show ports --id master        ESP32 pins only");
+    Serial.println("  show ports --id slave         STM32 pins only");
+    Serial.println("  show ports free --id slave    free STM32 pins only");
     Serial.println();
     Serial.println(CLR_AMBER "[ GPIO ]" CLR_RESET);
     Serial.println("  gpio mode  <pin> in|out|pu|pd|an|od");

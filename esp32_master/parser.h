@@ -22,6 +22,10 @@ void logErr (const String& msg);
 void logWarn(const String& msg);
 void logInfo(const String& msg);
 
+// show ports state (defined in esp32_master.ino)
+extern bool portsPending;
+extern bool portsPendingFreeOnly;
+
 // Forward declarations (defined in wifi_ntp.h — included before parser.h)
 void wifiConnect(const String& ssid, const String& password);
 void wifiStatus();
@@ -608,6 +612,38 @@ static String parseHumanCmd(const String& raw) {
         }
 
         logErr("rtc sub-command: init|status|get|getts|epoch|set|settss");
+        return "";
+    }
+
+    // ------------------------------------------------------------------ show ports
+    if (t0 == "show" && ntok >= 2 && String(tok[1]).equalsIgnoreCase("ports")) {
+        // show ports [free] [--id master|slave|all]
+        bool freeOnly  = false;
+        bool doMaster  = true;
+        bool doSlave   = true;
+
+        for (int i = 2; i < ntok; i++) {
+            String a = tok[i]; a.toLowerCase();
+            if (a == "free")    { freeOnly = true; continue; }
+            if (a == "--id" && i + 1 < ntok) {
+                String id = tok[i + 1]; id.toLowerCase(); i++;
+                if (id == "master") { doMaster = true;  doSlave = false; }
+                else if (id == "slave")  { doMaster = false; doSlave = true; }
+                else if (id == "all")    { doMaster = true;  doSlave = true; }
+                else logWarn("Unknown --id value '" + id + "'. Use master|slave|all.");
+            }
+        }
+
+        if (doMaster) printMasterPorts(freeOnly);
+
+        if (doSlave) {
+            // Send PORTS command to slave; result will be printed by a
+            // special-cased handler in handleSlaveReply (flagged via portsPending).
+            String sub = freeOnly ? "FREE" : "ALL";
+            portsPendingFreeOnly = freeOnly;
+            portsPending = true;
+            return "PORTS:" + sub;
+        }
         return "";
     }
 

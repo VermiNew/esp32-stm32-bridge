@@ -57,6 +57,7 @@ HardwareSerial Serial3(PB11, PB10);
 #include "cmd_dac.h"
 #include "cmd_buzzer.h"
 #include "cmd_debug.h"
+#include "cmd_ports.h"   // must be last — reads state from all above headers
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -153,6 +154,7 @@ static void dispatch(const String& type, const String& seq,
     else if (cmd == "CALC")   handleCalc (seq, rest);
     else if (cmd == "RTC")    handleRtc  (seq, rest);
     else if (cmd == "CAN")    handleCan  (seq, rest);
+    else if (cmd == "PORTS")  handlePorts (seq, rest);
     else if (cmd == "DAC")    handleDac   (seq, rest);
     else if (cmd == "BUZZER") handleBuzzer(seq, rest);
     else if (cmd == "DEBUG")  handleDebug (seq, rest);

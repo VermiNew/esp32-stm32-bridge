@@ -826,4 +826,57 @@ public:
     String execute(const String& data, unsigned long timeoutMs = STM32_API_TIMEOUT_MS) {
         return _api_exec(data, timeoutMs);
     }
+
+    // -----------------------------------------------------------------------
+    // Async (non-blocking) execute
+    // -----------------------------------------------------------------------
+
+    /** Send a command without waiting for the result.
+     *  The slave processes it normally; call asyncPoll() in loop() to check.
+     *  Only one async command can be in-flight at a time.
+     *  Returns false if the state machine is busy. */
+    bool asyncSend(const String& data) {
+        if (state != State::IDLE) return false;
+        _asyncCallback  = nullptr;
+        _asyncPending   = true;
+        startCommand(data);
+        return true;
+    }
+
+    /** Send a command with a callback invoked when the result arrives.
+     *  callback(result, wasError) is called from within pump().
+     *  Returns false if busy. */
+    bool asyncSend(const String& data, void (*callback)(const String& result, bool error)) {
+        if (state != State::IDLE) return false;
+        _asyncCallback = callback;
+        _asyncPending  = true;
+        startCommand(data);
+        return true;
+    }
+
+    /** Poll async state — call from loop() alongside pump().
+     *  Returns true and fills result/wasError when command completes.
+     *  Also fires the callback if one was registered. */
+    bool asyncPoll(String* result = nullptr, bool* wasError = nullptr) {
+        _api_pump();
+        if (!_asyncPending) return false;
+        if (state != State::IDLE) return false;  // still in flight
+
+        // Completed
+        _asyncPending = false;
+        if (result)   *result   = apiLastResult;
+        if (wasError) *wasError = apiLastWasErr;
+        if (_asyncCallback) {
+            _asyncCallback(apiLastResult, apiLastWasErr);
+            _asyncCallback = nullptr;
+        }
+        return true;
+    }
+
+    /** True if an async command is currently in flight. */
+    bool asyncBusy() const { return _asyncPending && state != State::IDLE; }
+
+private:
+    bool   _asyncPending  = false;
+    void (*_asyncCallback)(const String&, bool) = nullptr;
 };
