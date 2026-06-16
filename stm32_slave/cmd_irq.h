@@ -1,4 +1,5 @@
 #pragma once
+#define CMD_IRQ_H_INCLUDED
 /**
  * cmd_irq.h — GPIO interrupt event capture for stm32_slave
  *

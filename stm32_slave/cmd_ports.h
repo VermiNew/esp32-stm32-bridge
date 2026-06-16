@@ -21,11 +21,21 @@ void sendDone(const String& seq, const String& result);
 void sendErr (const String& seq, const String& reason);
 
 // ---------------------------------------------------------------------------
-// NOTE: cmd_ports.h must be included AFTER all other cmd_*.h headers in
-// stm32_slave.ino.  All state variables (spiActive, u2Active, etc.) are
-// static in their respective headers and are visible in the same translation
-// unit — no extern declarations needed.
+// Include-order contract:
+//   cmd_ports.h MUST be included after all other cmd_*.h headers in the
+//   same translation unit (stm32_slave.ino).  It reads static state variables
+//   declared in those headers — no extern needed because everything lives in
+//   one .ino compilation unit, but the order must be preserved.
+//
+//   Compile-time guard: the headers below define sentinel macros that we
+//   check here to catch accidental wrong-order includes.
 // ---------------------------------------------------------------------------
+#if !defined(CMD_SPI_H_INCLUDED) || !defined(CMD_I2C_H_INCLUDED) || \
+    !defined(CMD_CAN_H_INCLUDED) || !defined(CMD_IRQ_H_INCLUDED) || \
+    !defined(CMD_DAC_H_INCLUDED) || !defined(CMD_BUZZER_H_INCLUDED) || \
+    !defined(CMD_DEBUG_H_INCLUDED)
+  #error "cmd_ports.h must be included after cmd_spi.h, cmd_i2c.h, cmd_can.h, cmd_irq.h, cmd_dac.h, cmd_buzzer.h, cmd_debug.h"
+#endif
 
 // ---------------------------------------------------------------------------
 // Pin descriptor table — all STM32F103C8 pins exposed by this firmware

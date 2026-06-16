@@ -1,4 +1,5 @@
 #pragma once
+#define CMD_BUZZER_H_INCLUDED
 /**
  * cmd_buzzer.h — passive buzzer commands for stm32_slave
  *

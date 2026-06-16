@@ -1,4 +1,5 @@
 #pragma once
+#define CMD_SPI_H_INCLUDED
 /**
  * cmd_spi.h — SPI commands for stm32_slave
  *

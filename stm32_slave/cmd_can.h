@@ -1,4 +1,5 @@
 #pragma once
+#define CMD_CAN_H_INCLUDED
 /**
  * cmd_can.h — CAN bus (bxCAN) for stm32_slave
  *

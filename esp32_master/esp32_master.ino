@@ -319,6 +319,7 @@ static void handleSlaveReply(const String& raw) {
         apiLastWasErr = true;
         currentSeq = seqNext(currentSeq);
         state = State::IDLE;
+        portsPending = false;  // clear on error — don't corrupt next response
         return;
     }
 

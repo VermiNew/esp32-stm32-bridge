@@ -1,4 +1,5 @@
 #pragma once
+#define CMD_DEBUG_H_INCLUDED
 /**
  * cmd_debug.h — activity debug LEDs for stm32_slave
  *

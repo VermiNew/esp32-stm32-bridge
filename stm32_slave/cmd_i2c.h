@@ -1,4 +1,5 @@
 #pragma once
+#define CMD_I2C_H_INCLUDED
 /**
  * cmd_i2c.h — I2C (Wire / Wire2) commands for stm32_slave
  *
