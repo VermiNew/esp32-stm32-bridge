@@ -3,7 +3,7 @@
 > ESP32 DevKit jako **master** steruje STM32F103C8T6 "Blue Pill" jako
 > **universal hardware agent** przez bezpośredni UART + protokół ASCII z CRC16.
 
-**[English](DOCUMENTATION.md)**
+**[Read in English](DOCUMENTATION.md)**
 
 ---
 
