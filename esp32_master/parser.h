@@ -26,6 +26,10 @@ void logInfo(const String& msg);
 extern bool portsPending;
 extern bool portsPendingFreeOnly;
 
+// master debug LED functions (defined in esp32_master.ino)
+void masterDebugAttach(int txPin, int rxPin);
+void masterDebugDetach();
+
 // Forward declarations (defined in wifi_ntp.h — included before parser.h)
 void wifiConnect(const String& ssid, const String& password);
 void wifiStatus();

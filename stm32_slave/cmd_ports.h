@@ -77,8 +77,8 @@ static String pinFunction(const char* tok, int flat) {
     }
 
     // --- DAC ---
-    if (dac1Active && flat == _F('A', 4)) return "DAC1";
-    if (dac2Active && flat == _F('A', 5)) return "DAC2";
+    if (dacActive[1] && flat == _F('A', 4)) return "DAC1";
+    if (dacActive[2] && flat == _F('A', 5)) return "DAC2";
 
     // --- SPI ---
     if (spiActive) {

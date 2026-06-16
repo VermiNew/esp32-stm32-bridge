@@ -79,7 +79,7 @@ Plan → Kod → Przeczytaj swój kod → Kompilacja → Test HW → Commit
 ```bash
 # STM32 Blue Pill
 arduino-cli compile \
-  --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8 \
+  --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103CB \
   stm32_slave
 
 # ESP32 master

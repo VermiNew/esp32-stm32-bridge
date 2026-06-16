@@ -125,7 +125,7 @@ jobs:
       - name: Build STM32 slave
         run: |
           arduino-cli compile \
-            --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103C8 \
+            --fqbn STMicroelectronics:stm32:GenF1:pnum=BLUEPILL_F103CB \
             stm32_slave
 
       - name: Verify protocol.h sync

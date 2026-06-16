@@ -83,15 +83,15 @@ static unsigned long lastWdogKickMs = 0;
 // ---------------------------------------------------------------------------
 // Debug LEDs (ESP32 side activity indicators)
 // ---------------------------------------------------------------------------
-static int  masterDbgTxPin  = -1;   // blinks on every frame sent to slave
-static int  masterDbgRxPin  = -1;   // blinks on every frame received from slave
-static bool masterDbgActive = false;
+int  masterDbgTxPin  = -1;   // blinks on every frame sent to slave
+int  masterDbgRxPin  = -1;   // blinks on every frame received from slave
+bool masterDbgActive = false;
 
 static unsigned long masterDbgTxOff = 0;
 static unsigned long masterDbgRxOff = 0;
 static const unsigned long MASTER_DBG_PULSE_MS = 20;
 
-static void masterDebugAttach(int txPin, int rxPin) {
+void masterDebugAttach(int txPin, int rxPin) {
     masterDbgTxPin  = txPin;
     masterDbgRxPin  = rxPin;
     masterDbgActive = true;
@@ -103,7 +103,7 @@ static void masterDebugAttach(int txPin, int rxPin) {
     digitalWrite(txPin, LOW);  digitalWrite(rxPin, LOW);
 }
 
-static void masterDebugDetach() {
+void masterDebugDetach() {
     if (masterDbgActive) {
         digitalWrite(masterDbgTxPin, LOW);
         digitalWrite(masterDbgRxPin, LOW);
