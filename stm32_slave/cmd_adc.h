@@ -110,20 +110,18 @@ static void handleAdc(const String& seq, const String& args) {
 
     // ----- TEMP (internal temperature sensor on ADC1_IN16) -----
     if (sub == "TEMP") {
-        // STM32duino exposes the internal temp via ATEMP macro on some builds.
-        // If ATEMP is not defined, we use the raw channel approach.
-#ifdef ATEMP
+#if defined(ATEMP)
         int raw = analogRead(ATEMP);
+#elif defined(AVTEMP)
+        int raw = analogRead(AVTEMP);
 #else
-        sendErr(seq, "ADC:TEMP_UNAVAIL");
-        return;
+        // Fallback: direct channel read via STM32 ADC channel 16
+        analogRead(A0);  // ensure ADC is initialised
+        int raw = analogRead(ADC_CHANNEL_TEMPSENSOR);
 #endif
-        // V_SENSE = raw * VDDA / 4095  (in mV)
-        float vsense = (float)raw * ADC_VDDA_MV / 4095.0f;
-        // Temp = (V25 - V_SENSE) / Avg_Slope + 25
-        float temp_c = (ADC_V25_MV - vsense) / ADC_SLOPE_MV + 25.0f;
+        float vsense   = (float)raw * ADC_VDDA_MV / 4095.0f;
+        float temp_c   = (ADC_V25_MV - vsense) / ADC_SLOPE_MV + 25.0f;
         int temp_tenths = (int)(temp_c * 10.0f);
-        // Result: e.g. "254" means 25.4 °C
         sendDone(seq, String(temp_tenths));
         return;
     }

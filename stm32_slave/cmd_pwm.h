@@ -23,8 +23,9 @@
 void sendDone(const String& seq, const String& result);
 void sendErr (const String& seq, const String& reason);
 
-// Track last set duty per pin index (for READ)
-static uint16_t pwmDutyTable[64] = {};  // index = flat pin, value = 0..255
+// Track last set duty and frequency per pin index
+static uint16_t pwmDutyTable[64] = {};   // per-mille 0..1000
+static uint32_t pwmFreqTable[64] = {};   // Hz, 0 = default freq
 
 static void handlePwm(const String& seq, const String& args) {
     String toks[5];
@@ -44,7 +45,7 @@ static void handlePwm(const String& seq, const String& args) {
         // Map 0..1000 to 0..255 for Arduino analogWrite
         int duty8 = (int)((float)duty1000 * 255.0f / 1000.0f);
         analogWrite(pin, duty8);
-        if (pin < 64) pwmDutyTable[pin] = (uint16_t)duty1000;
+        if (pin < 64) { pwmDutyTable[pin] = (uint16_t)duty1000; pwmFreqTable[pin] = 0; }
 
         sendDone(seq, "PWM:" + toks[1] + ":" + String(duty1000));
         return;
@@ -63,11 +64,9 @@ static void handlePwm(const String& seq, const String& args) {
         int duty1000 = constrain(toks[3].toInt(), 0, 1000);
         int duty8    = (int)((float)duty1000 * 255.0f / 1000.0f);
 
-        // STM32duino API: analogWriteFrequency sets the PWM frequency for
-        // the timer associated with 'pin'. Must be called before analogWrite.
         analogWriteFrequency(hz);
         analogWrite(pin, duty8);
-        if (pin < 64) pwmDutyTable[pin] = (uint16_t)duty1000;
+        if (pin < 64) { pwmDutyTable[pin] = (uint16_t)duty1000; pwmFreqTable[pin] = hz; }
 
         char buf[32];
         snprintf(buf, sizeof(buf), "PWM:%s:%luHz:%d‰",
@@ -83,18 +82,28 @@ static void handlePwm(const String& seq, const String& args) {
         if (pin < 0) { sendErr(seq, "PWM:BAD_PIN"); return; }
         analogWrite(pin, 0);
         digitalWrite(pin, LOW);
-        if (pin < 64) pwmDutyTable[pin] = 0;
+        if (pin < 64) { pwmDutyTable[pin] = 0; pwmFreqTable[pin] = 0; }
         sendDone(seq, "STOPPED:" + toks[1]);
         return;
     }
 
-    // ----- READ -----
+    // ----- READ (duty) -----
     if (sub == "READ") {
         toks[1].toUpperCase();
         int pin = parsePin(toks[1]);
         if (pin < 0) { sendErr(seq, "PWM:BAD_PIN"); return; }
         uint16_t duty = (pin < 64) ? pwmDutyTable[pin] : 0;
         sendDone(seq, String(duty));
+        return;
+    }
+
+    // ----- FREQREAD (last set frequency in Hz, 0 = default) -----
+    if (sub == "FREQREAD") {
+        toks[1].toUpperCase();
+        int pin = parsePin(toks[1]);
+        if (pin < 0) { sendErr(seq, "PWM:BAD_PIN"); return; }
+        uint32_t hz = (pin < 64) ? pwmFreqTable[pin] : 0;
+        sendDone(seq, String(hz));
         return;
     }
 

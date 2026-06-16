@@ -274,6 +274,13 @@ struct PWM_API {
         String r = _api_exec("PWM:READ:" + p);
         return apiLastWasErr ? STM32_ERR_INT : r.toInt();
     }
+
+    /** Read last set frequency in Hz. Returns 0 if default freq was used. */
+    long freqRead(const String& pin) {
+        String p = pin; p.toUpperCase();
+        String r = _api_exec("PWM:FREQREAD:" + p);
+        return apiLastWasErr ? STM32_ERR_INT : r.toInt();
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -288,6 +295,12 @@ struct I2C_API {
     /** Set bus speed. speed_khz = 100 or 400. */
     bool setSpeed(int speed_khz) {
         _api_exec(_prefix() + "CFG:" + String(speed_khz));
+        return !apiLastWasErr;
+    }
+
+    /** Set transaction timeout in ms (1–1000). Useful for slow/missing devices. */
+    bool setTimeout(int timeout_ms) {
+        _api_exec(_prefix() + "CFG:100:" + String(timeout_ms));
         return !apiLastWasErr;
     }
 
@@ -602,9 +615,11 @@ struct SYS_API {
     String status()  { return _api_exec("SYS:STATUS"); }
     long   uptime()  { String r = _api_exec("SYS:UPTIME");  return apiLastWasErr ? -1 : r.toInt(); }
     String chipId()  { return _api_exec("SYS:CHIPID"); }
-    int    cpuMhz()  { String r = _api_exec("SYS:CPUFREQ"); return apiLastWasErr ? -1 : r.toInt(); }
-    int    freeRam() { String r = _api_exec("SYS:FREERAM"); return apiLastWasErr ? -1 : r.toInt(); }
-    String fwVer()   { return _api_exec("SYS:FWVER"); }
+    int    cpuMhz()      { String r = _api_exec("SYS:CPUFREQ"); return apiLastWasErr ? -1 : r.toInt(); }
+    int    freeRam()     { String r = _api_exec("SYS:FREERAM"); return apiLastWasErr ? -1 : r.toInt(); }
+    String fwVer()       { return _api_exec("SYS:FWVER"); }
+    /** Internal temperature in tenths of °C (e.g. 254 = 25.4 °C). */
+    int    temperature() { String r = _api_exec("SYS:TEMP"); return apiLastWasErr ? STM32_ERR_INT : r.toInt(); }
     String echo(const String& text) { return _api_exec("SYS:ECHO:" + text); }
     bool   reset()   { _api_exec("SYS:RESET", 500); return true; }
 

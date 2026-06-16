@@ -172,6 +172,23 @@ static void handleSys(const String& seq, const String& args) {
         return;
     }
 
+    // ----- TEMP (convenience wrapper — same as ADC:TEMP, returns tenths of °C) -----
+    if (sub == "TEMP") {
+#if defined(ATEMP)
+        int raw = analogRead(ATEMP);
+#elif defined(AVTEMP)
+        int raw = analogRead(AVTEMP);
+#else
+        analogRead(A0);
+        int raw = analogRead(ADC_CHANNEL_TEMPSENSOR);
+#endif
+        const float v25 = 1430.0f, slope = 4.3f, vdda = 3300.0f;
+        float vsense  = (float)raw * vdda / 4095.0f;
+        float temp_c  = (v25 - vsense) / slope + 25.0f;
+        sendDone(seq, String((int)(temp_c * 10.0f)));
+        return;
+    }
+
     // ----- RESET -----
     if (sub == "RESET") {
         // Send reply first, then reset (best-effort)

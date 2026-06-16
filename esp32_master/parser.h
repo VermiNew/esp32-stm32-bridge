@@ -176,7 +176,11 @@ static String parseHumanCmd(const String& raw) {
             if (ntok < 3) { logErr("Usage: pwm read <pin>"); return ""; }
             return "PWM:READ:" + normPin(tok[2]);
         }
-        logErr("pwm sub-command: set|freq|stop|read");
+        if (t1 == "freqread") {
+            if (ntok < 3) { logErr("Usage: pwm freqread <pin>"); return ""; }
+            return "PWM:FREQREAD:" + normPin(tok[2]);
+        }
+        logErr("pwm sub-command: set|freq|stop|read|freqread");
         return "";
     }
 
@@ -186,8 +190,10 @@ static String parseHumanCmd(const String& raw) {
         String t1 = tok[1]; t1.toLowerCase();
 
         if (t1 == "cfg") {
-            if (ntok < 3) { logErr("Usage: i2c cfg 100|400"); return ""; }
-            return "I2C:CFG:" + tok[2];
+            if (ntok < 3) { logErr("Usage: i2c cfg 100|400 [timeout_ms]"); return ""; }
+            String r = "I2C:CFG:" + tok[2];
+            if (ntok >= 4) r += ":" + tok[3];
+            return r;
         }
         if (t1 == "scan") return "I2C:SCAN";
         if (t1 == "ping") {
@@ -332,6 +338,7 @@ static String parseHumanCmd(const String& raw) {
         if (t1 == "cpufreq") return "SYS:CPUFREQ";
         if (t1 == "fwver")   return "SYS:FWVER";
         if (t1 == "freeram") return "SYS:FREERAM";
+        if (t1 == "temp")    return "SYS:TEMP";
         if (t1 == "reset")   return "SYS:RESET";
         if (t1 == "echo") {
             String txt = (ntok >= 3) ? tok[2] : "hello";
@@ -388,8 +395,10 @@ static String parseHumanCmd(const String& raw) {
         if (ntok < 2) { logErr("Usage: i2c2 cfg|scan|ping|write|read|wreg|rreg ..."); return ""; }
         String t1 = tok[1]; t1.toLowerCase();
         if (t1 == "cfg") {
-            if (ntok < 3) { logErr("Usage: i2c2 cfg 100|400"); return ""; }
-            return "I2C2:CFG:" + tok[2];
+            if (ntok < 3) { logErr("Usage: i2c2 cfg 100|400 [timeout_ms]"); return ""; }
+            String r = "I2C2:CFG:" + tok[2];
+            if (ntok >= 4) r += ":" + tok[3];
+            return r;
         }
         if (t1 == "scan") return "I2C2:SCAN";
         if (t1 == "ping") {

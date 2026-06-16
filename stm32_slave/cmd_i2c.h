@@ -75,12 +75,20 @@ static void handleI2c(const String& seq, const String& args, int bus = 1) {
     const String& sub = toks[0];
 
     // ----- CFG -----
+    // I2C:CFG:SPEED_KHZ            → set bus speed (100 or 400)
+    // I2C:CFG:SPEED_KHZ:TIMEOUT_MS → set speed + transaction timeout (1..1000 ms)
     if (sub == "CFG") {
         if (n < 2) { sendErr(seq, "I2C:CFG:MISSING_SPEED"); return; }
         uint32_t spd = (uint32_t)toks[1].toInt();
         if (spd != 100 && spd != 400) { sendErr(seq, "I2C:CFG:BAD_SPEED"); return; }
         w->setClock(spd * 1000UL);
-        sendDone(seq, "I2C" + String(bus) + ":SPEED:" + String(spd) + "kHz");
+        String reply = "I2C" + String(bus) + ":SPEED:" + String(spd) + "kHz";
+        if (n >= 3) {
+            uint32_t toms = (uint32_t)constrain(toks[2].toInt(), 1, 1000);
+            w->setTimeout(toms * 1000UL);  // setTimeout takes microseconds
+            reply += ":TIMEOUT:" + String(toms) + "ms";
+        }
+        sendDone(seq, reply);
         return;
     }
 
