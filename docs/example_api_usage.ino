@@ -94,7 +94,7 @@ void example_spi_thermocouple(STM32& stm) {
             // Bits [31:18] = 14-bit thermocouple temp, 0.25°C/LSB
             int16_t tc = (int16_t)((raw >> 18) & 0x3FFF);
             if (tc & 0x2000) tc |= 0xC000;  // sign extend
-            Serial.printf("Thermocouple: %.2f °C\n", tc * 0.25f);
+            Serial.printf("Thermocouple: %.2f C\n", tc * 0.25f);
         }
     }
 }
@@ -247,4 +247,230 @@ void example_watchdog(STM32& stm) {
     Serial.println("Slave watchdog armed at 10 s.");
 
     // If the master loses connection or crashes, the slave resets after 10 s.
+}
+
+// ---------------------------------------------------------------------------
+// EXAMPLE 11 — DAC voltage sweep (PA4 = DAC1, PA5 = DAC2)
+//
+// Ramps DAC1 from 0 V to 3.3 V in 100 steps, then turns off.
+// Also demonstrates reading back the last set value.
+// CONFLICT: PA4/PA5 shared with SPI1 — do not use DAC and SPI simultaneously.
+// ---------------------------------------------------------------------------
+void example_dac_sweep(STM32& stm) {
+    Serial.println("DAC sweep: 0 V → 3.3 V on PA4 (DAC1)");
+
+    for (int mv = 0; mv <= 3300; mv += 33) {
+        stm.dac.mv(1, mv);
+        if (!stm.ok()) {
+            Serial.println("DAC error: " + stm.error());
+            break;
+        }
+        // Read back the raw value the slave stored
+        int raw = stm.dac.read(1);
+        Serial.printf("  %4d mV → raw=%d\n", mv, raw);
+        // No delay() here — each API call already takes ~5 ms round-trip
+    }
+
+    // Output a fixed 1.65 V (mid-rail) on DAC2
+    stm.dac.mv(2, 1650);
+    Serial.printf("DAC2 set to 1650 mV, raw=%d\n", stm.dac.read(2));
+
+    // Timed hold — pump() keeps the link alive instead of delay()
+    unsigned long t0 = millis();
+    while (millis() - t0 < 2000) stm.pump();
+
+    // Turn both channels off
+    stm.dac.off();  // ch=0 → both channels
+    Serial.println("DAC off.");
+}
+
+// ---------------------------------------------------------------------------
+// EXAMPLE 12 — Buzzer: startup jingle + status check
+//
+// Plays a short melody on a passive buzzer connected to PA8.
+// buzzerTick() in the slave loop handles auto-stop non-blocking.
+// ---------------------------------------------------------------------------
+void example_buzzer_jingle(STM32& stm) {
+    const char* PIN = "A8";  // PWM-capable pin (TIM1_CH1)
+
+    // Play three ascending tones, each 150 ms
+    uint32_t notes[] = { 523, 659, 784 };  // C5, E5, G5
+    for (int i = 0; i < 3; i++) {
+        stm.buzzer.tone(PIN, notes[i], 150);
+        if (!stm.ok()) { Serial.println("Buzzer error: " + stm.error()); return; }
+        // Wait for the note to finish (150 ms), keeping link alive
+        unsigned long t0 = millis();
+        while (millis() - t0 < 160) stm.pump();
+    }
+
+    // Hold a victory chord (G5) for 400 ms
+    stm.buzzer.tone(PIN, 784, 400);
+
+    // Poll status while it plays
+    unsigned long t0 = millis();
+    while (millis() - t0 < 450) {
+        stm.pump();
+        if (millis() - t0 > 50) {
+            bool playing = stm.buzzer.isPlaying(PIN);
+            Serial.printf("  buzzer playing: %s\n", playing ? "yes" : "no");
+            t0 = millis() + 9999;  // only poll once
+        }
+    }
+
+    // Quick confirmation beep
+    stm.buzzer.beep(PIN);
+    unsigned long tw = millis();
+    while (millis() - tw < 110) stm.pump();
+    Serial.println("Jingle done.");
+}
+
+// ---------------------------------------------------------------------------
+// EXAMPLE 13 — Debug LEDs: attach, run a few commands, detach
+//
+// Attach two LEDs on the STM32 side to visualise protocol traffic:
+//   RX LED (B0) — blinks on every SEND frame arriving from the master
+//   TX LED (B1) — blinks on every DONE/ERR frame the slave sends back
+// ---------------------------------------------------------------------------
+void example_debug_leds(STM32& stm) {
+    // Attach LEDs
+    if (!stm.debug.attach("B0", "B1")) {
+        Serial.println("debug attach failed: " + stm.error());
+        return;
+    }
+    Serial.println("Debug LEDs: " + stm.debug.status());
+
+    // Run a few commands — watch the LEDs blink
+    for (int i = 0; i < 5; i++) {
+        stm.adc.read("A0");
+        stm.pump();
+    }
+
+    // Detach (releases B0 and B1)
+    stm.debug.detach();
+    Serial.println("Debug LEDs detached.");
+}
+
+// ---------------------------------------------------------------------------
+// EXAMPLE 14 — PWM with custom frequency + freqRead
+//
+// Drives a servo-style signal on A8: 50 Hz, 1.5 ms pulse = 75/1000 duty.
+// Then reads back the frequency stored on the slave to verify.
+// ---------------------------------------------------------------------------
+void example_pwm_servo(STM32& stm) {
+    const char* PIN = "A8";  // TIM1_CH1
+
+    // 50 Hz, 7.5% duty = ~1.5 ms high → servo neutral
+    stm.pwm.freq(PIN, 50, 75);
+    if (!stm.ok()) { Serial.println("PWM error: " + stm.error()); return; }
+
+    long hz   = stm.pwm.freqRead(PIN);
+    int  duty = stm.pwm.read(PIN);
+    Serial.printf("PWM on %s: %ld Hz, duty=%d/1000\n", PIN, hz, duty);
+
+    // Hold for 2 s, then sweep duty 75→125 (1.5 ms → ~2.5 ms, servo full-right)
+    unsigned long t0 = millis();
+    while (millis() - t0 < 2000) stm.pump();
+
+    for (int d = 75; d <= 125; d += 5) {
+        stm.pwm.freq(PIN, 50, d);
+        unsigned long tw = millis();
+        while (millis() - tw < 20) stm.pump();  // 20 ms per step
+    }
+
+    stm.pwm.stop(PIN);
+    Serial.println("Servo stopped.");
+}
+
+// ---------------------------------------------------------------------------
+// EXAMPLE 15 — Async API: send command, do other work, collect result
+//
+// asyncSend() returns immediately; asyncPoll() checks completion each loop().
+// Useful when the slave command takes a while (e.g. I2C scan, ADC stream).
+// ---------------------------------------------------------------------------
+
+static bool asyncDone  = false;
+static bool asyncError = false;
+
+void asyncCallback(const String& result, bool error) {
+    asyncDone  = true;
+    asyncError = error;
+    Serial.printf("Async result: %s  (ok=%d)\n", result.c_str(), !error);
+}
+
+void example_async(STM32& stm) {
+    // Kick off a slow I2C scan without blocking
+    if (!stm.asyncSend("I2C:SCAN", asyncCallback)) {
+        Serial.println("Busy — cannot start async command.");
+        return;
+    }
+    Serial.println("Async I2C scan started, doing other work...");
+
+    asyncDone = false;
+    unsigned long t0 = millis();
+
+    while (!asyncDone && millis() - t0 < 30000) {
+        stm.pump();          // drives the state machine + fires callback on completion
+        // ... other non-blocking work here ...
+    }
+
+    if (!asyncDone) Serial.println("Async scan timed out.");
+}
+
+// ---------------------------------------------------------------------------
+// EXAMPLE 16 — Link health check + system info
+//
+// Demonstrates reading slave system metrics and checking the link state.
+// Useful as a periodic keep-alive health report.
+// ---------------------------------------------------------------------------
+void example_health_check(STM32& stm) {
+    // Link state (CONNECTED / DEGRADED / DISCONNECTED — from heartbeat engine)
+    Serial.println("Link: " + stm.linkStatus());
+
+    // System status
+    Serial.println("SYS STATUS: " + stm.sys.status());
+    Serial.printf("Uptime:  %ld ms\n", stm.sys.uptime());
+    Serial.printf("FW ver:  %s\n",      stm.sys.fwVer().c_str());
+    Serial.printf("Chip ID: %s\n",      stm.sys.chipId().c_str());
+    Serial.printf("CPU:     %d MHz\n",  stm.sys.cpuMhz());
+    Serial.printf("RAM:     %d bytes free\n", stm.sys.freeRam());
+
+    // Internal temperature — both APIs exposed (ADC and SYS)
+    int tempAdc = stm.adc.temperature();   // ADC:TEMP path
+    int tempSys = stm.sys.temperature();   // SYS:TEMP path — identical reading
+    Serial.printf("Temp (ADC):  %.1f C\n", tempAdc / 10.0f);
+    Serial.printf("Temp (SYS):  %.1f C\n", tempSys / 10.0f);
+
+    // Round-trip latency (echo test)
+    unsigned long t0 = millis();
+    String echo = stm.sys.echo("ping");
+    unsigned long rtt = millis() - t0;
+    Serial.printf("Echo '%s'  RTT ~%lu ms\n", echo.c_str(), rtt);
+}
+
+// ---------------------------------------------------------------------------
+// EXAMPLE 17 — I2C with custom timeout (slow/clock-stretched device)
+//
+// Some I2C devices (e.g. soil moisture sensors) stretch the clock heavily.
+// Use i2c.setTimeout() to raise the Wire timeout before talking to them.
+// ---------------------------------------------------------------------------
+void example_i2c_slow_device(STM32& stm) {
+    const int SENSOR_ADDR = 0x20;
+
+    // Raise timeout to 500 ms for this slow device
+    stm.i2c.setTimeout(500);
+
+    if (!stm.i2c.ping(SENSOR_ADDR)) {
+        Serial.println("Slow sensor not found — reverting timeout");
+        stm.i2c.setTimeout(25);  // restore default
+        return;
+    }
+
+    // Read 2 bytes
+    String raw = stm.i2c.read(SENSOR_ADDR, 2);
+    if (stm.ok() && raw.length() == 4) {
+        uint16_t val = (uint16_t)strtoul(raw.c_str(), nullptr, 16);
+        Serial.printf("Sensor raw value: %u\n", val);
+    }
+
+    stm.i2c.setTimeout(25);  // restore default
 }

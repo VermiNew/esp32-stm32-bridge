@@ -14,41 +14,53 @@ esp32-stm32-bridge/
 │   ├── esp32_master.ino        główna pętla, state machine, heartbeat, wdog
 │   ├── protocol.h              CRC16, splitTokens, parsePin, hexUtils (kopia)
 │   ├── parser.h                parser komend CLI → protocol DATA string
+│   ├── ports.h                 mapa pinów ESP32, druk tabeli pin↔funkcja
 │   ├── wifi_ntp.h              WiFi connect/scan, NTP sync → RTC:SETTSS
+│   ├── colors.h                stałe ANSI escape do kolorowego wyjścia
 │   └── stm32_api.h             programistyczne C++ API (klasa STM32)
 ├── stm32_slave/
 │   ├── stm32_slave.ino         setup/loop, router ramek, sendDone/sendErr
 │   ├── protocol.h              CRC16, splitTokens, parsePin, hexUtils (oryginał)
+│   ├── hal_conf_extra.h        opcjonalna konfiguracja HAL dla STM32duino
 │   ├── cmd_gpio.h              GPIO: MODE/WRITE/READ/TOGGLE/PORT
 │   ├── cmd_adc.h               ADC: READ/AVG/MV/MULTI/STREAM/TEMP/VREF
-│   ├── cmd_pwm.h               PWM: SET/FREQ/STOP/READ
+│   ├── cmd_pwm.h               PWM: SET/FREQ/FREQREAD/STOP/READ
 │   ├── cmd_i2c.h               I2C1+I2C2: SCAN/PING/WRITE/READ/WREG/RREG/CFG
 │   ├── cmd_spi.h               SPI: BEGIN/XFER/WRITE/READ/END
 │   ├── cmd_u2.h                USART2: CFG/TX/RX/FLUSH/STATUS/CLOSE
 │   ├── cmd_u3.h                USART3: CFG/TX/RX/FLUSH/STATUS/CLOSE
-│   ├── cmd_ee.h                EEPROM: WRITE/READ/WRWORD/RDWORD/WRHEX/RDHEX/FILL
+│   ├── cmd_ee.h                EEPROM: WRITE/READ/WRWORD/RDWORD/WRHEX/RDHEX/FILL/SIZE
 │   ├── cmd_irq.h               IRQ: ATTACH/DETACH/POLL/LIST (8 slotów)
 │   ├── cmd_can.h               CAN: BEGIN/TX/TXE/RX/FILTER/STATUS/END + loopback
 │   ├── cmd_rtc.h               RTC: INIT/GET/SET/GETTS/SETTSS/EPOCH (LSE)
-│   ├── cmd_sys.h               SYS: STATUS/UPTIME/CHIPID/RESET/WDOG/FREERAM/ECHO
-│   └── cmd_misc.h              CALC (MAP/CRC16/SQRT/...) + legacy LED/BLINK
+│   ├── cmd_sys.h               SYS: STATUS/UPTIME/CHIPID/RESET/WDOG/FREERAM/ECHO/TEMP
+│   ├── cmd_misc.h              CALC (MAP/CRC16/SQRT/...) + legacy LED/BLINK
+│   ├── cmd_dac.h               DAC: SET/MV/READ/OFF  (PA4=DAC1, PA5=DAC2)
+│   ├── cmd_buzzer.h            BUZZER: TONE/BEEP/STOP/STATUS  (pasywny, PWM)
+│   ├── cmd_debug.h             DEBUG: ATTACH/DETACH/STATUS  (LEDy aktywności RX/TX)
+│   └── cmd_ports.h             PORTS: ALL/FREE/USED  (mapa zajętości pinów; include LAST)
 ├── scripts/
 │   ├── Shared.psm1             wspólny moduł pwsh7 (kolory, i18n, detekcja portu)
 │   ├── flash.ps1               wizard flashowania STM32 przez ESP32 bridge (PS7)
 │   ├── test.ps1                smoke-test harness (PowerShell 7)
 │   ├── test.py                 smoke-test harness (Python, wymaga pyserial)
+│   ├── minify.py               generuje odchudzone kopie PS1/PY do dist/
 │   ├── get-stm32flash.ps1      pobieranie + weryfikacja MD5 stm32flash (Windows)
 │   ├── get-stm32flash.sh       pobieranie + weryfikacja MD5 stm32flash (Linux/macOS)
 │   ├── get-stm32rtc.ps1        instalacja biblioteki STM32RTC via arduino-cli
 │   ├── flash_stm32.bat         minimalny wrapper bat bez wizarda (Windows)
 │   ├── flash_stm32.sh          minimalny wrapper bash (Linux/macOS)
+│   ├── README.md               dokumentacja skryptów (English)
+│   ├── CZYTAJ.md               dokumentacja skryptów (Polski)
 │   └── lang/                   pliki i18n pl.psd1 / en.psd1
 ├── docs/
+│   ├── DOCUMENTATION.md        pełna dokumentacja (English)
+│   ├── INSTRUKCJA.md           pełna instrukcja (Polski)
+│   ├── CZYTAJ.md               skrócony przewodnik startowy (Polski)
 │   └── example_api_usage.ino   przykłady użycia C++ API (nie standalone sketch)
-├── .github/workflows/build.yml CI: kompilacja ESP32 master/flasher + STM32 slave
+├── dist/                       minified scripts (generowane przez CI / minify.py)
+├── .github/workflows/build.yml CI: lint + minify + kompilacja + weryfikacja protocol.h
 ├── README.md                   skrócony przewodnik startowy (English)
-├── DOCUMENTATION.md            pełna dokumentacja (English)
-├── INSTRUKCJA.md               pełna instrukcja (Polski)
 └── AGENTS.md                   przewodnik dla agentów AI / kontrybutorów ← ten plik
 ```
 
